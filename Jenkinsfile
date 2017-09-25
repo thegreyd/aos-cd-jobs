@@ -1,49 +1,67 @@
+
+
 properties(
-  [
-    disableConcurrentBuilds()
-  ]
+        [
+                buildDiscarder(logRotator(artifactDaysToKeepStr: '', artifactNumToKeepStr: '', daysToKeepStr: '', numToKeepStr: '360')),
+                [$class : 'ParametersDefinitionProperty',
+                 parameterDefinitions:
+                         [
+                                 [$class: 'hudson.model.BooleanParameterDefinition', defaultValue: false, description: 'Mock run to pickup new Jenkins parameters?', name: 'MOCK'],
+                         ]
+                ],
+                disableConcurrentBuilds()
+        ]
 )
 
-// https://issues.jenkins-ci.org/browse/JENKINS-33511
-def set_workspace() {
-  if(env.WORKSPACE == null) {
-    env.WORKSPACE = WORKSPACE = pwd()
-  }
-}
-
 node('openshift-build-1') {
-  try {
-    timeout(time: 30, unit: 'MINUTES') {
-      deleteDir()
-      set_workspace()
-      stage('clone') {
-        dir('aos-cd-jobs') {
-          checkout scm
-          sh 'git checkout master'
+
+    checkout scm
+
+    def commonlib = load( "pipeline-scripts/commonlib.groovy")
+    commonlib.initialize()
+
+    try {
+        buildlib = load('pipeline-scripts/buildlib.groovy')
+
+        sshagent(["openshift-bot"]) {
+            stage("oit setup"){
+
+                sh 'rm -rf enterprise-images'
+
+                git 'https://github.com/openshift/enterprise-images.git'
+
+                dir ( "enterprise-images" ) {
+                    sh 'virtualenv env'
+                    sh 'env/bin/pip install -r oit/oit/requirements.txt'
+                }
+
+            }
+
+            stage("push images") {
+                dir ( "enterprise-images" ) {
+                    buildlib.with_virtualenv("${pwd()}/env") {
+                        sh './oit --user=ocp-build --group sync-3.6 distgits:push-images --to-defaults'
+                    }
+                }
+            }
+
+            stage("legacy maint") {
+                // sh "./scripts/maintenance.sh"
+            }
         }
-      }
-      stage('run') {
-        sshagent(['openshift-bot']) { // git repo privileges stored in Jenkins credential store
-          sh '''\
-virtualenv env/
-. env/bin/activate
-pip install gitpython
-export PYTHONPATH=$PWD/aos-cd-jobs
-python aos-cd-jobs/aos_cd_jobs/pruner.py
-python aos-cd-jobs/aos_cd_jobs/updater.py
-'''
-        }
-      }
-    }
-  } catch(err) {
-    mail(
-      to: 'bbarcaro@redhat.com, jupierce@redhat.com',
-      from: "aos-cd@redhat.com",
-      subject: 'aos-cd-jobs-branches job: error',
-      body: """\
-Encoutered an error while running the aos-cd-jobs-branches job: ${err}\n\n
+
+    } catch ( err ) {
+        // Replace flow control with: https://jenkins.io/blog/2016/12/19/declarative-pipeline-beta/ when available
+        mail(to: "jupierce@redhat.com",
+                from: "aos-cd@redhat.com",
+                subject: "Error running buildvm maintenance",
+                body: """${err}
+
+
 Jenkins job: ${env.BUILD_URL}
-""")
-    throw err
-  }
+""");
+        // Re-throw the error in order to fail the job
+        throw err
+    }
+
 }

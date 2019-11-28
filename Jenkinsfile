@@ -46,7 +46,7 @@ node {
                     ],
                     [
                         name: 'PREVIOUS',
-                        description: 'Optional: Tag(s) (comma separated) of last 10 releases this can upgrade FROM',
+                        description: 'Check item #6 "PREVIOUS" of the following doc for instructions on how to fill this field:\nhttps://mojo.redhat.com/docs/DOC-1201843#jive_content_id_Completing_a_4yz_release',
                         $class: 'hudson.model.StringParameterDefinition',
                         defaultValue: ""
                     ],
@@ -127,6 +127,20 @@ node {
             stage("wait for stable") { release_obj = release.stageWaitForStable(RELEASE_STREAM_NAME, dest_release_tag) }
             stage("get release info") {
                 release_info = release.stageGetReleaseInfo(quay_url, dest_release_tag)
+            }
+            stage("advisory image list") {
+                filename = "${params.NAME}-image-list.txt"
+                retry (3) {
+                    commonlib.shell(script: "elliott advisory-images -a ${advisory} > ${filename}")
+                }
+                archiveArtifacts(artifacts: filename, fingerprint: true)
+                commonlib.email(
+                    to: "openshift-ccs@redhat.com",
+                    cc: "aos-team-art@redhat.com",
+                    replyTo: "aos-team-art@redhat.com",
+                    subject: "OCP ${params.NAME} Image List",
+                    body: readFile(filename)
+                )
             }
             buildlib.registry_quay_dev_login()  // chances are, earlier auth has expired
             stage("mirror tools") { release.stagePublishClient(quay_url, dest_release_tag, arch, CLIENT_TYPE) }

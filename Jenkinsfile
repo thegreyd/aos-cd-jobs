@@ -1,59 +1,111 @@
-properties(
-  [
-    disableConcurrentBuilds()
-  ]
-)
+#!/usr/bin/env groovy
 
-// https://issues.jenkins-ci.org/browse/JENKINS-33511
-def set_workspace() {
-  if(env.WORKSPACE == null) {
-    env.WORKSPACE = WORKSPACE = pwd()
-  }
-}
+node {
+    checkout scm
+    def build = load("build.groovy")
+    def buildlib = build.buildlib
+    def commonlib = build.commonlib
 
-node('openshift-build-1') {
-  try {
-    timeout(time: 30, unit: 'MINUTES') {
-      deleteDir()
-      set_workspace()
-      dir('aos-cd-jobs') {
-        stage('clone') {
-          checkout scm
-          sh 'git checkout master'
+    properties(
+        [
+            buildDiscarder(
+                logRotator(
+                    artifactDaysToKeepStr: '',
+                    artifactNumToKeepStr: '',
+                    daysToKeepStr: '',
+                    numToKeepStr: ''
+                )
+            ),
+            [
+                $class : 'ParametersDefinitionProperty',
+                parameterDefinitions: [
+                    commonlib.ocpVersionParam('BUILD_VERSION', '4'),
+                    [
+                        name: 'NAME',
+                        description: 'The release name, like 4.2.0, or 4.2.0-0.nightly-2019-08-28-152644',
+                        $class: 'hudson.model.StringParameterDefinition',
+                        defaultValue: "",
+                    ],
+                    [
+                        name: 'ARCH',
+                        description: 'Which architecture of RHCOS build to look for',
+                        $class: 'hudson.model.ChoiceParameterDefinition',
+                        choices: (['x86_64', 's390x', 'ppc64le', 'aarch64']),
+                    ],
+                    [
+                        name: 'RHCOS_MIRROR_PREFIX',
+                        description: 'Where to place this release under https://mirror.openshift.com/pub/openshift-v4/ARCH/dependencies/rhcos/',
+                        $class: 'hudson.model.ChoiceParameterDefinition',
+                        choices: (['pre-release', 'test'] + commonlib.ocp4Versions),
+                    ],
+                    [
+                        name: 'RHCOS_BUILD',
+                        description: 'ID of the RHCOS build to sync. e.g.: 42.80.20190828.2',
+                        $class: 'hudson.model.StringParameterDefinition',
+                        defaultValue: "",
+                    ],
+                    [
+                        name: 'NOOP',
+                        description: 'Run commands with their dry-run options enabled (test everything)',
+                        $class: 'BooleanParameterDefinition',
+                        defaultValue: false,
+                    ],
+                    [
+                        name: 'SYNC_LIST',
+                        description: 'Instead of figuring out items to sync from meta.json, use this input file.\nMust be a URL reachable from buildvm, contents must be reachable from use-mirror-upload',
+                        $class: 'hudson.model.StringParameterDefinition',
+                        defaultValue: "",
+                    ],
+                    [
+                        name: 'FORCE',
+                        description: 'Download (overwrite) and mirror items even if the destination directory already exists\nErases everything already in the target destination.',
+                        $class: 'BooleanParameterDefinition',
+                        defaultValue: false,
+                    ],
+                    [
+                        name: 'NO_LATEST',
+                        description: 'Do not update the "latest" symlink after downloading',
+                        $class: 'BooleanParameterDefinition',
+                        defaultValue: false,
+                    ],
+                    [
+                        name: 'NO_MIRROR',
+                        description: 'Do not run the push.pub script after downloading',
+                        $class: 'BooleanParameterDefinition',
+                        defaultValue: false,
+                    ],
+                    commonlib.suppressEmailParam(),
+                    commonlib.mockParam(),
+                ],
+            ]
+        ]
+    )
+
+    commonlib.checkMock()
+    echo("Initializing RHCOS-${params.RHCOS_MIRROR_PREFIX} sync: #${currentBuild.number}")
+    build.initialize()
+
+    try {
+        if ( params.SYNC_LIST == "" ) {
+            stage("Get/Generate sync list") { build.rhcosSyncPrintArtifacts() }
+        } else {
+            stage("Get/Generate sync list") { build.rhcosSyncManualInput() }
         }
-        stage('run') {
-          final url = sh(
-            returnStdout: true,
-            script: 'git config remote.origin.url')
-          if(!(url =~ /^[-\w]+@[-\w]+(\.[-\w]+)*:/)) {
-            error('This job uses ssh keys for auth, please use an ssh url')
-          }
-          def prune = true, key = 'openshift-bot'
-          if(url.trim() != 'git@github.com:openshift/aos-cd-jobs.git') {
-            prune = false
-            key = "${(url =~ /.*:([^\/]+)/)[0][1]}-aos-cd-bot"
-          }
-          sshagent([key]) {
-            sh """\
-virtualenv ../env/
-. ../env/bin/activate
-pip install gitpython
-${prune ? 'python -m aos_cd_jobs.pruner' : 'echo Fork, skipping pruner'}
-python -m aos_cd_jobs.updater
-"""
-          }
-        }
-      }
-    }
-  } catch(err) {
-    mail(
-      to: 'tbielawa@redhat.com, jupierce@redhat.com',
-      from: "aos-cicd@redhat.com",
-      subject: 'aos-cd-jobs-branches job: error',
-      body: """\
-Encountered an error while running the aos-cd-jobs-branches job: ${err}\n\n
-Jenkins job: ${env.BUILD_URL}
+        stage("Mirror artifacts") { build.rhcosSyncMirrorArtifacts() }
+        // stage("Gen AMI docs") { build.rhcosSyncGenDocs() }
+    } catch ( err ) {
+        commonlib.email(
+            to: "aos-art-automation+failed-rhcos-sync@redhat.com",
+            from: "aos-art-automation@redhat.com",
+            replyTo: "aos-team-art@redhat.com",
+            subject: "Error during OCP ${params.RHCOS_MIRROR_PREFIX} build sync",
+            body: """
+There was an issue running build-sync for OCP ${params.RHCOS_MIRROR_PREFIX}:
+
+    ${err}
 """)
-    throw err
-  }
+        throw ( err )
+    } finally {
+        commonlib.safeArchiveArtifacts(build.artifacts)
+    }
 }

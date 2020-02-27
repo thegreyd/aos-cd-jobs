@@ -1,4 +1,5 @@
 #!/usr/bin/env groovy
+// test
 
 // https://issues.jenkins-ci.org/browse/JENKINS-33511
 def set_workspace() {

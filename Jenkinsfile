@@ -18,15 +18,11 @@ pipeline {
 
     stages {
         stage("Validate params") {
-            steps {
-                script { // can't put logic in declarative pipeline without "script" step
-                    if (!params.RPM_URL) {
-                        error "RPM_URL must be specified"
-                    }
-                    if (!params.VERSION) {
-                        error "VERSION must be specified"
-                    }
-                }
+            if (!params.RPM_URL) {
+                error "RPM_URL must be specified"
+            }
+            if (!params.VERSION) {
+                error "VERSION must be specified"
             }
         }
         stage("Download RPM") {
@@ -47,8 +43,8 @@ pipeline {
             steps {
                 sshagent(['aos-cd-test']) {
                     sh "scp -r ${params.VERSION} use-mirror-upload.ops.rhcloud.com:/srv/pub/openshift-v4/clients/odo/"
-                    sh "ssh use-mirror-upload.ops.rhcloud.com -- ln --symbolic --force --no-dereference ${params.VERSION} /srv/pub/openshift-v4/clients/odo/latest"
-                    sh "ssh use-mirror-upload.ops.rhcloud.com -- /usr/local/bin/push.pub.sh openshift-v4/clients/odo -v"
+                    sh "ssh ln --symbolic --force --no-dereference ${params.VERSION} /srv/pub/openshift-v4/clients/odo/latest"
+                    sh "ssh /usr/local/bin/push.pub.sh openshift-v4/clients/odo -v"
                 }
             }
         }

@@ -1,60 +1,67 @@
-properties(
-  [
-    disableConcurrentBuilds()
-  ]
-)
+#!/usr/bin/env groovy
 
-// https://issues.jenkins-ci.org/browse/JENKINS-33511
-def set_workspace() {
-  if(env.WORKSPACE == null) {
-    env.WORKSPACE = WORKSPACE = pwd()
-  }
-}
+node {
+    checkout scm
+    def buildlib = load("pipeline-scripts/buildlib.groovy")
+    def commonlib = buildlib.commonlib
 
-node('openshift-build-1') {
-  try {
-    timeout(time: 30, unit: 'MINUTES') {
-      deleteDir()
-      set_workspace()
-      dir('aos-cd-jobs') {
-        stage('clone') {
-          checkout scm
-          sh 'git checkout master'
-        }
-        stage('run') {
-          final url = sh(
-            returnStdout: true,
-            script: 'git config remote.origin.url')
-          if(!(url =~ /^[-\w]+@[-\w]+(\.[-\w]+)*:/)) {
-            error('This job uses ssh keys for auth, please use an ssh url')
-          }
-          def prune = true, key = 'openshift-bot'
-          if(url.trim() != 'git@github.com:openshift/aos-cd-jobs.git') {
-            prune = false
-            key = "${(url =~ /.*:([^\/]+)/)[0][1]}-aos-cd-bot"
-          }
-          sshagent([key]) {
-            sh """\
-virtualenv ../env/
-. ../env/bin/activate
-pip install gitpython
-export GIT_PYTHON_TRACE=full
-${prune ? 'python -m aos_cd_jobs.pruner' : 'echo Fork, skipping pruner'}
-python -m aos_cd_jobs.updater
-"""
-          }
-        }
-      }
+    properties(
+        [
+            buildDiscarder(
+                logRotator(
+                    artifactDaysToKeepStr: '',
+                    artifactNumToKeepStr: '',
+                    daysToKeepStr: '60',
+                    numToKeepStr: ''
+                )
+            ),
+            disableResume(),
+            [
+                $class: 'ParametersDefinitionProperty',
+                parameterDefinitions: [
+                    commonlib.ocpVersionParam('BUILD_VERSION', '4'),
+                    [
+                        name: 'MAIL_LIST_FAILURE',
+                        description: 'Failure Mailing List',
+                        $class: 'hudson.model.StringParameterDefinition',
+                        defaultValue: 'aos-art-automation+failed-el8-rebuilds@redhat.com',
+                    ],
+                    commonlib.suppressEmailParam(),
+                    commonlib.mockParam(),
+                ]
+            ],
+        ]
+    )
+
+    commonlib.checkMock()
+
+    def version = params.BUILD_VERSION
+    try {
+        buildlib.kinit()
+        def builds = [
+            "openshift": {
+                stage("openshift RPM") {
+                    commonlib.shell("./rebuild_rpm.sh openshift ${version}")
+                }
+            },
+            "clients": {
+                stage("openshift-clients RPM") {
+                    commonlib.shell("./rebuild_rpm.sh openshift-clients ${version}")
+                }
+            }
+        ]
+        parallel builds
+    } catch(err) {
+        echo "Package build failed:\n${e}"
+        currentBuild.result = "FAILURE"
+        currentBuild.description = "\nerror: ${err.getMessage()}"
+        commonlib.email(
+            to: "${params.MAIL_LIST_FAILURE}",
+            from: "aos-art-automation@redhat.com",
+            replyTo: "aos-team-art@redhat.com",
+            subject: "Error rebuilding ${version} el8 RPMs for RHCOS",
+            body: "Encountered error(s) while running pipeline:\n${err}",
+        )
+        throw err
     }
-  } catch(err) {
-    mail(
-      to: 'tbielawa@redhat.com, jupierce@redhat.com',
-      from: "aos-cicd@redhat.com",
-      subject: 'aos-cd-jobs-branches job: error',
-      body: """\
-Encountered an error while running the aos-cd-jobs-branches job: ${err}\n\n
-Jenkins job: ${env.BUILD_URL}
-""")
-    throw err
-  }
 }

@@ -38,7 +38,6 @@ node {
                                 '3. Feature Candidate (No name, Signed - rpms may not be, Previous, Candidate Channel)',
                                 '4. Hotfix (No name, Signed, No Previous, All Channels)'
                         ].join('\n'),
-                        defaultValue: '1. Standard Release'
                     ],
                     [
                         name: 'RELEASE_OFFSET',
@@ -102,8 +101,14 @@ node {
                         defaultValue: false
                     ],
                     [
+                        name: 'KEEP_RELEASE_CLOSED',
+                        description: 'Prevent creation of advisories for the next z-stream of given OCP version',
+                        $class: 'BooleanParameterDefinition',
+                        defaultValue: false
+                    ],
+                    [
                         name: 'DRY_RUN',
-                        description: 'Only do dry run test and exit.',
+                        description: 'Take no actions. Note: still notifies and runs signing job (which fails).',
                         $class: 'BooleanParameterDefinition',
                         defaultValue: false
                     ],
@@ -136,6 +141,7 @@ node {
     buildlib.cleanWorkdir("${env.WORKSPACE}")
 
     def CLIENT_TYPE = 'ocp'
+    ga_release = false
     direct_release_nightly = false
     detect_previous = true
     candidate_pr_only = false
@@ -144,6 +150,7 @@ node {
 
     if (params.RELEASE_TYPE.startsWith('1.')) {
         release_name = "${major}.${minor}.${release_offset}"
+        ga_release = true
     } else if (params.RELEASE_TYPE.startsWith('2.')) { // Release candidate (after code freeze)
         candidate_pr_only = true
         release_name = "${major}.${minor}.0-rc.${release_offset}"
@@ -161,7 +168,7 @@ node {
     }
 
     slackChannel = slacklib.to(FROM_RELEASE_TAG)
-    slackChannel.task("Public release prep for: ${FROM_RELEASE_TAG}") {
+    slackChannel.task("Public release prep for: ${FROM_RELEASE_TAG}${ params.DRY_RUN ? ' (DRY RUN)' : ''}") {
         taskThread ->
         sshagent(['aos-cd-test']) {
             release_info = ""
@@ -287,7 +294,7 @@ node {
                     // if never goes into 4-stable.
                     return
                 }
-                try {  // don't let a slack outage break the job
+                try {  // don't let a slack outage break the job at this point
                     def previousList = PREVIOUS_LIST_STR.trim().tokenize('\t ,')
                     def modeOptions = [ 'aws', 'gcp', 'azure,mirror' ]
                     def testIndex = 0
@@ -298,10 +305,29 @@ node {
                         testIndex++
                     }
                     currentBuild.description += "\n@cluster-bot requests:\n${testLines.join('\n')}\n"
+                    if (params.DRY_RUN) {
+                        echo "DRY_RUN: Not slacking release-artists to run these:\n${testLines.join('\n')}"
+                        return
+                    }
                     slackChannel.say("Hi @release-artists . A new release is ready and needs some upgrade tests to be triggered. "
                         + "Please open a chat with @cluster-bot and issue each of these lines individually:\n${testLines.join('\n')}")
                 } catch(ex) {
                     echo "slack notification failed: ${ex}"
+                }
+            }
+
+            stage("open next release") {
+                if (!ga_release) {
+                    echo "Skipping advisories creation for non-GA release."
+                } else if (arch != 'x86_64') {
+                    echo "Skipping advisories creation for non-x86_64 architecture."
+                } else if (params.KEEP_RELEASE_CLOSED) {
+                    echo "KEEP_RELEASE_CLOSED set; skipping advisories creation"
+                } else if (params.DRY_RUN) {
+                    echo "Would have created new advisories, skipping for DRY_RUN"
+                } else {
+                    def ocpVersion = params.FROM_RELEASE_TAG.split("\\.")[0..1].join(".")
+                    release.createAdvisoriesFor(ocpVersion)
                 }
             }
 
@@ -323,8 +349,8 @@ node {
             }
 
             stage("advisory image list") {
-                if (direct_release_nightly) {
-                    // No advisory work if we are promoting a nightly directly
+                if (!ga_release) {
+                    echo "No need to send docs an image list for non-GA releases."
                     return
                 }
                 if (params.SKIP_IMAGE_LIST) {
@@ -358,20 +384,6 @@ node {
                 retry(3) {
                     release.stagePublishClient(quay_url, dest_release_tag, release_name, arch, CLIENT_TYPE)
                 }
-            }
-
-            stage("advisory update") {
-                if (direct_release_nightly) {
-                    return
-                }
-                release.stageAdvisoryUpdate()
-            }
-
-            stage("cross ref check") {
-                if (direct_release_nightly) {
-                    return
-                }
-                release.stageCrossRef()
             }
 
             stage("send release message") {

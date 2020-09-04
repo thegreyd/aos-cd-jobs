@@ -1,60 +1,89 @@
-properties(
-  [
-    disableConcurrentBuilds()
-  ]
-)
+node {
+    properties(
+        [
+            buildDiscarder(
+                logRotator(
+                    artifactDaysToKeepStr: '',
+                    artifactNumToKeepStr: '',
+                    daysToKeepStr: '',
+                    numToKeepStr: '360'
+                )
+            ),
+            [
+                $class : 'ParametersDefinitionProperty',
+                parameterDefinitions: [
+                    [
+                        name: 'MOCK',
+                        description: 'Mock run to pickup new Jenkins parameters?',
+                        $class: 'hudson.model.BooleanParameterDefinition',
+                        defaultValue: false,
+                    ],
+                ],
+                parameterDefinitions: [
+                    [
+                        name: 'DRY_RUN',
+                        description: "Don't change anything, just detect the current enforcement state",
+                        $class: 'hudson.model.BooleanParameterDefinition',
+                        defaultValue: false,
+                    ],
+                ],
+                parameterDefinitions: [
+                    [
+                        name: 'NO_SLACK',
+                        description: "Don't send a notification over slack if the rules had to be reapplied",
+                        $class: 'hudson.model.BooleanParameterDefinition',
+                        defaultValue: false,
+                    ],
+                ]
 
-// https://issues.jenkins-ci.org/browse/JENKINS-33511
-def set_workspace() {
-  if(env.WORKSPACE == null) {
-    env.WORKSPACE = WORKSPACE = pwd()
-  }
-}
+            ],
+            disableResume(),
+            disableConcurrentBuilds()
+        ]
+    )
+    checkout scm
+    def buildlib = load( "pipeline-scripts/buildlib.groovy" )
+    def commonlib = buildlib.commonlib
+    def slacklib = commonlib.slacklib
+    commonlib.describeJob("enforce-firewall", """
+        <h2>Automatically re-enables the firewall</h2>
+        <b>Timing</b>: The scheduled job of the same name runs this twice daily.
 
-node('openshift-build-1') {
-  try {
-    timeout(time: 30, unit: 'MINUTES') {
-      deleteDir()
-      set_workspace()
-      dir('aos-cd-jobs') {
-        stage('clone') {
-          checkout scm
-          sh 'git checkout master'
-        }
-        stage('run') {
-          final url = sh(
-            returnStdout: true,
-            script: 'git config remote.origin.url')
-          if(!(url =~ /^[-\w]+@[-\w]+(\.[-\w]+)*:/)) {
-            error('This job uses ssh keys for auth, please use an ssh url')
-          }
-          def prune = true, key = 'openshift-bot'
-          if(url.trim() != 'git@github.com:openshift/aos-cd-jobs.git') {
-            prune = false
-            key = "${(url =~ /.*:([^\/]+)/)[0][1]}-aos-cd-bot"
-          }
-          sshagent([key]) {
-            sh """\
-virtualenv ../env/ -p python3
-. ../env/bin/activate
-pip install gitpython
-export GIT_PYTHON_TRACE=full
-${prune ? 'python -m aos_cd_jobs.pruner' : 'echo Fork, skipping pruner'}
-python -m aos_cd_jobs.updater
-"""
-          }
-        }
-      }
+        Checks if the firewall rules are enforcing. If they are not
+        then they will be reapplied. If the rules are reapplied by
+        this job then a notification will be sent over slack to the
+        <code>#team-art</code> channel.
+
+        Job supports a few parameters:
+
+        <ul>
+          <li><b>DRY_RUN</b> - Only <b>check</b> if the rules are presently enforcing</li>
+          <li><b>NO_SLACK</b> - Don't send enforcement notifications out over slack</li>
+        </ul>
+    """)
+    needApplied = false
+    reapplied = false
+    notifyChannel = '#art-bot-test'
+
+    // ######################################################################
+    // Check if the firewall rules are presently enforcing. If they
+    // are enforcing then we should not be able to query random hosts
+    // not on the allowed list.
+    def extAccess = httpRequest(responseHandle: 'NONE',
+				url: 'https://www.yahoo.com',
+				timeout: 15)
+    if ( extAccess.response == '200' ) {
+	needApplied = true
+	echo "need to turn on the firewall"
+	reapplied = true
     }
-  } catch(err) {
-    mail(
-      to: 'tbielawa@redhat.com, jupierce@redhat.com',
-      from: "aos-cicd@redhat.com",
-      subject: 'aos-cd-jobs-branches job: error',
-      body: """\
-Encountered an error while running the aos-cd-jobs-branches job: ${err}\n\n
-Jenkins job: ${env.BUILD_URL}
-""")
-    throw err
-  }
+
+
+    // ######################################################################
+    // Notify art team if the rules had to be reapplied AND NO_SLACK is false
+    if ( !params.NO_SLACK && reapplied ) {
+        slackChannel = slacklib.to(notifyChannel)
+        slackChannel.say('Hi @tbielawa')
+    }
+
 }

@@ -11,23 +11,11 @@ node {
     commonlib.describeJob("promote", """
         <h2>Publish official OCP 4 release artifacts</h2>
         <b>Timing</b>: <a href="https://github.com/openshift/art-docs/blob/master/4.y.z-stream.md#create-the-release-image" target="_blank">4.y z-stream doc</a>
+
         Be aware that by default the job stops for user input very early on. It
         sends slack alerts in our release channels when this occurs.
 
-        For the default use case, this job:
-        <ul><li>publishes a nightly as an officially named release image
-          <li>waits up to three hours for it to be accepted
-          <li>enables automation, so builds will run again
-          <li>opens pull requests to cinci-graph-data
-          <li>copies the clients to the mirror
-          <li>signs the clients and release image
-          <li>...and handles odds and ends for a release</ul>
-
-        There are minor differences when this job runs for FCs, RCs, or hotfixes.
-
-        Most of what it does can be replicated manually by running other jobs,
-        which is useful when it breaks for some reason. See:
-        <a href="https://github.com/openshift/art-docs/blob/master/4.y.z-stream.md#release-job-failures" target="_blank">Release job failures</a>
+        For more details see the <a href="https://github.com/openshift/aos-cd-jobs/blob/master/jobs/build/promote/README.md" target="_blank">README</a>
     """)
 
 
@@ -99,6 +87,11 @@ node {
                     booleanParam(
                         name: 'PERMIT_PAYLOAD_OVERWRITE',
                         description: 'DO NOT USE without team lead approval. Allows the pipeline to overwrite an existing payload in quay.',
+                        defaultValue: false,
+                    ),
+                    booleanParam(
+                        name: 'SKIP_VERIFY_BUGS',
+                        description: 'For standard release, skip verifying bugs in advisories.<br/>Use to save time on large releases if bugs have already been verified.',
                         defaultValue: false,
                     ),
                     choice(
@@ -305,9 +298,12 @@ node {
                     errata_url = ''
                     return
                 }
-                def retval = release.stageValidation(quay_url, dest_release_tag, advisory, params.PERMIT_PAYLOAD_OVERWRITE, params.PERMIT_ALL_ADVISORY_STATES, params.FROM_RELEASE_TAG, arch)
-                advisory = advisory?:retval.advisoryInfo.id
-                errata_url = retval.errataUrl
+                skipVerifyBugs = !ga_release || params.SKIP_VERIFY_BUGS
+                commonlib.retrySkipAbort("Validating release", taskThread, "Error running release validation") {
+                    def retval = release.stageValidation(quay_url, dest_release_tag, advisory, params.PERMIT_PAYLOAD_OVERWRITE, params.PERMIT_ALL_ADVISORY_STATES, params.FROM_RELEASE_TAG, arch, skipVerifyBugs)
+                    advisory = advisory ?: retval.advisoryInfo.id
+                    errata_url = retval.errataUrl
+                }
             }
             stage("build payload") { release.stageGenPayload(quay_url, release_name, dest_release_tag, from_release_tag, description, previousList.join(','), errata_url) }
 
@@ -422,6 +418,10 @@ node {
             stage("advisory image list") {
                 if (!ga_release) {
                     echo "No need to send docs an image list for non-GA releases."
+                    return
+                }
+                if (arch != 'x86_64') {
+                    echo "No need to send docs an image list for non-x86_64 releases."
                     return
                 }
                 if (advisory == -1) {

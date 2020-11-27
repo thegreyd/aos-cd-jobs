@@ -8,7 +8,7 @@ A release consists of multiple advisories that should be created consistently.
 * all need a fairly standard set of parameters
 * some need placeholder bugs added
 * all should be recorded in group.yml
-* automation should be enabled to run builds for this version
+* for 4.x Live IDs should be requested ASAP
 
 Note that this will change significantly as part of the [Simplify 4.y releases](https://issues.redhat.com/browse/ART-2055) epic.
 
@@ -33,15 +33,6 @@ it can refer to the image advisory by the URL that it will have when shipped liv
 (All advisories need live IDs eventually, but others only need it at ship time.)
 
 Note: Does not send if SUPPRESS\_EMAIL is checked!
-
-### ENABLE\_AUTOMATION
-
-Unfreeze automation to enable building and sweeping into the new advisories.
-This updates the freeze\_automation entry in the ocp-build-data branch for the
-release.
-
-Usually we want to do this - uncheck only if you know of a reason why we want
-to keep the release closed to further changes.
 
 ### ASSIGNED\_TO
 

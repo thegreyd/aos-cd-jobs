@@ -50,7 +50,7 @@ node {
                     choice(
                         name: 'RHCOS_MIRROR_PREFIX',
                         description: 'Where to place this release under https://mirror.openshift.com/pub/openshift-v4/ARCH/dependencies/rhcos/',
-                        choices: (['pre-release', 'test'] + commonlib.ocp4Versions),
+                        choices: (['pre-release', 'test', 'latest'] + commonlib.ocp4Versions),
                     ),
                     string(
                         name: 'RHCOS_BUILD',

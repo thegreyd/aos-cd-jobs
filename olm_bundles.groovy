@@ -36,9 +36,9 @@ def validate_advisories(advisory1, advisory2, group) {
         error("Group ${group} not found in advisory ${advisory1} data. Exiting")
     }
     
-    // validate the exact version of advisory1(4.7.4) is in advisory2
+    // validate the version of advisory1(4.7.4) is in advisory2 string
     version = adv1[index]
-    if (!(version in adv2_str)) {
+    if (!adv2_str.contains(version)) {
         error("Version mismatch. ${version} not found in advisory ${advisory2} data. Exiting")
     }
 }

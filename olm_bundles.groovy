@@ -26,7 +26,7 @@ def get_olm_operators() {
 def validate_advisories(advisory1, advisory2, group) {
     def advisory1_v = elliott("get ${advisory1}")
     def advisory2_v = elliott("get ${advisory2}")
-    if !(advisory1_v in advisory2_v && group in advisory2_v) {
+    if (!(advisory1_v in advisory2_v && group in advisory2_v)) {
         echo(advisory1_v, advisory2_v, group)
         error("Inconsistent advisories/group")
     }

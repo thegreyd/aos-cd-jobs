@@ -32,7 +32,7 @@ def validate_advisories(advisory1, advisory2, group) {
     // validate advisory1 string contains group(4.7)
     adv1 = adv1_str.split()
     index = adv1.findIndexOf { it.contains(group) }
-    if index == -1 {
+    if (index == -1) {
         error("Group ${group} not found in advisory ${advisory1} data. Exiting")
     }
     

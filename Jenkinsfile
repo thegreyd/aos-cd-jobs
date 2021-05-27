@@ -81,10 +81,21 @@ node {
     power_index = nightly_list.findIndexOf { it.contains("ppc64le") }
     x86_index = nightly_list.findIndexOf { !it.contains("s390x") && !it.contains("ppc64le") }
     if (s390x_index == -1 || power_index == -1 || x86_index == -1) {
-        error("Something doesn't seem right. Job expects 3 nightlies of each arch")
+        def resp = input(
+            message: "Something doesn't seem right. Job expects 3 nightlies of each arch. Do you still want to proceed?",
+            parameters: [
+                booleanParam(
+                    defaultValue: false,
+                    description: "This is release ${release_name}. What release is in flight for the previous minor release 4.${prevMinor}?",
+                    name: 'PROCEED',
+                )
+            ]
+        )
+        if (!resp.PROCEED) {
+            error("Aborting.")
+        }
     }
 
-    promote_job_location = 'build%2Fpromote'
     common_params = [
         buildlib.param('String','RELEASE_TYPE', params.RELEASE_TYPE),
         buildlib.param('String','IN_FLIGHT_PREV', params.IN_FLIGHT_PREV),
@@ -93,6 +104,8 @@ node {
         booleanParam(name: 'DRY_RUN', value: params.DRY_RUN),
         booleanParam(name: 'MOCK', value: params.MOCK)
     ]
+
+    promote_job_location = 'build%2Fpromote'
 
     parallel(
         "x86_64": {

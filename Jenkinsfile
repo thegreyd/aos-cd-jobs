@@ -74,9 +74,6 @@ node {
     }
     
     nightly_list = params.NIGHTLIES.split("[,\\s]+")
-    if (nightly_list.size() != 3) {
-        error("Something doesn't seem right. Job expects 3 nightlies of each arch")
-    }
     s390x_index = nightly_list.findIndexOf { it.contains("s390x") }
     power_index = nightly_list.findIndexOf { it.contains("ppc64le") }
     x86_index = nightly_list.findIndexOf { !it.contains("s390x") && !it.contains("ppc64le") }

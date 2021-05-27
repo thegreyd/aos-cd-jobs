@@ -83,7 +83,7 @@ node {
             parameters: [
                 booleanParam(
                     defaultValue: false,
-                    description: "This is release ${release_name}. What release is in flight for the previous minor release 4.${prevMinor}?",
+                    description: "Are you sure to proceed with the given nightlies?",
                     name: 'PROCEED',
                 )
             ]

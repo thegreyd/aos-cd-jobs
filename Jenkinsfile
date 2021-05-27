@@ -95,6 +95,7 @@ node {
 
     common_params = [
         buildlib.param('String','RELEASE_TYPE', params.RELEASE_TYPE),
+        buildlib.param('String','RELEASE_OFFSET', params.RELEASE_OFFSET)
         buildlib.param('String','IN_FLIGHT_PREV', params.IN_FLIGHT_PREV),
         buildlib.param('String','RESUME_FROM', params.RESUME_FROM),
         buildlib.param('String','ADVISORY', ""),

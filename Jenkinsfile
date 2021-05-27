@@ -81,7 +81,7 @@ node {
                     ),
                     string(
                         name: 'IN_FLIGHT_PREV',
-                        description: 'This is the in flight release version of previous minor version of OCP. Leave blank to be prompted later in the job. Used to fill upgrade suggestions.',
+                        description: 'This is the in flight release version of previous minor version of OCP. Leave blank to be prompted later in the job. "skip" to indicate that there is no such release in flight. Used to fill upgrade suggestions.',
                         defaultValue: "",
                         trim: true,
                     ),
@@ -334,10 +334,8 @@ node {
                         in_flight_prev_required = false
                     } else if (params.IN_FLIGHT_PREV) {
                         in_flight_prev = params.IN_FLIGHT_PREV.trim()
-                        pattern = /$major\.$prevMinor\.(\d+)/
-                        match = in_flight_prev =~ pattern
-                        match.find()
-                        if (match.size() == 1) {
+                        valid = release.validateInFlightPrevVersion(in_flight_prev, major, prevMinor)
+                        if (valid) {
                             print("Proceeding with given in_flight_prev: $in_flight_prev")
                             in_flight_prev_required = false
                         } else {

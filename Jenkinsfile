@@ -82,12 +82,13 @@ node {
             message: "Something doesn't seem right. Job expects 3 nightlies of each arch. Do you still want to proceed with given nightlies $nightly_list ?",
             parameters: [
                 booleanParam(
-                    defaultValue: false,
-                    description: "Are you sure to proceed with the given nightlies?",
                     name: 'PROCEED',
+                    defaultValue: false,
+                    description: "Are you sure to proceed with the given nightlies?"
                 )
             ]
         )
+        print(resp)
         if (!resp.PROCEED) {
             error("Aborting.")
         }

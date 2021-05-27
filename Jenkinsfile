@@ -43,6 +43,22 @@ node {
                         description: 'Integer. Do not specify for hotfix. If offset is X for 4.5 nightly => Release name is 4.5.X for standard, 4.5.0-rc.X for Release Candidate, 4.5.0-fc.X for Feature Candidate ',
                         trim: true,
                     ),
+                    string(
+                        name: 'IN_FLIGHT_PREV',
+                        description: 'This is the in flight release version of previous minor version of OCP. Leave blank to be prompted later in the job. Used to fill upgrade suggestions.',
+                        defaultValue: false,
+                        trim: true,
+                    ),
+                    choice(
+                        name: 'RESUME_FROM',
+                        description: 'Select stage to resume from. Useful to execute remaining steps in the case of a failed promote job.',
+                        choices: [
+                                '0. The beginning',
+                                '1. Mirror binaries',
+                                '2. Signing',
+                                '3. Cincinnati PRs',
+                            ].join('\n'),
+                    ),
                     commonlib.dryrunParam('Take no actions. Note: still notifies and runs signing job (which fails)'),
                     commonlib.mockParam(),
                 ]
@@ -68,9 +84,11 @@ node {
         error("Something doesn't seem right. Job expects 3 nightlies of each arch")
     }
 
+    promote_job_location = 'build%2Fpromote'
     common_params = [
         buildlib.param('String','RELEASE_TYPE', params.RELEASE_TYPE),
-        buildlib.param('String','RELEASE_OFFSET', params.RELEASE_OFFSET),
+        buildlib.param('String','IN_FLIGHT_PREV', params.IN_FLIGHT_PREV),
+        buildlib.param('String','RESUME_FROM', params.RESUME_FROM),
         buildlib.param('String','ADVISORY', ""),
         booleanParam(name: 'DRY_RUN', value: params.DRY_RUN),
         booleanParam(name: 'MOCK', value: params.MOCK)
@@ -84,7 +102,7 @@ node {
                 params << buildlib.param('String','FROM_RELEASE_TAG', nightly)
                 
                 build(
-                    job: '/aos-cd-builds/build%2Fpromote',
+                    job: promote_job_location,
                     propagate: false,
                     parameters: params
                 )
@@ -98,7 +116,7 @@ node {
                 params << buildlib.param('String','FROM_RELEASE_TAG', nightly)
                 
                 build(
-                    job: '/aos-cd-builds/build%2Fpromote',
+                    job: promote_job_location,
                     propagate: false,
                     parameters: params
                 )
@@ -112,7 +130,7 @@ node {
                 params << buildlib.param('String','FROM_RELEASE_TAG', nightly)
                 
                 build(
-                    job: '/aos-cd-builds/build%2Fpromote',
+                    job: promote_job_location,
                     propagate: false,
                     parameters: params
                 )

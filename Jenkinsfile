@@ -110,44 +110,60 @@ node {
     parallel(
         "x86_64": {
             stage("x86_64") {
-                def params = common_params.clone()
-                nightly = nightly_list[x86_index]
-                params << buildlib.param('String','FROM_RELEASE_TAG', nightly)
+                when {
+                    x86_index != -1
+                }
+                steps {
+                    def params = common_params.clone()
+                    nightly = nightly_list[x86_index]
+                    params << buildlib.param('String','FROM_RELEASE_TAG', nightly)
+                    
+                    build(
+                        job: promote_job_location,
+                        propagate: false,
+                        parameters: params
+                    )
+                    currentBuild.description += "<br>triggered promote: ${nightly}"
+                }
                 
-                build(
-                    job: promote_job_location,
-                    propagate: false,
-                    parameters: params
-                )
-                currentBuild.description += "<br>triggered promote: ${nightly}"
             }
         },
         "s390x": {
             stage("s390x") {
-                def params = common_params.clone()
-                nightly = nightly_list[s390x_index]
-                params << buildlib.param('String','FROM_RELEASE_TAG', nightly)
-                
-                build(
-                    job: promote_job_location,
-                    propagate: false,
-                    parameters: params
-                )
-                currentBuild.description += "<br>triggered promote: ${nightly}"
+                when {
+                    s390x_index != -1
+                }
+                steps {
+                    def params = common_params.clone()
+                    nightly = nightly_list[s390x_index]
+                    params << buildlib.param('String','FROM_RELEASE_TAG', nightly)
+                    
+                    build(
+                        job: promote_job_location,
+                        propagate: false,
+                        parameters: params
+                    )
+                    currentBuild.description += "<br>triggered promote: ${nightly}"
+                }
             }
         },
         "ppc64le": {
             stage("ppc64le") {
-                def params = common_params.clone()
-                nightly = nightly_list[power_index]
-                params << buildlib.param('String','FROM_RELEASE_TAG', nightly)
-                
-                build(
-                    job: promote_job_location,
-                    propagate: false,
-                    parameters: params
-                )
-                currentBuild.description += "<br>triggered promote: ${nightly}"
+                when {
+                    power_index != -1
+                }
+                steps {
+                    def params = common_params.clone()
+                    nightly = nightly_list[power_index]
+                    params << buildlib.param('String','FROM_RELEASE_TAG', nightly)
+                    
+                    build(
+                        job: promote_job_location,
+                        propagate: false,
+                        parameters: params
+                    )
+                    currentBuild.description += "<br>triggered promote: ${nightly}"
+                }
             }
         }
     )

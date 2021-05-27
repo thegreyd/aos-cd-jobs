@@ -79,7 +79,7 @@ node {
     x86_index = nightly_list.findIndexOf { !it.contains("s390x") && !it.contains("ppc64le") }
     if (s390x_index == -1 || power_index == -1 || x86_index == -1) {
         def resp = input(
-            message: "Something doesn't seem right. Job expects 3 nightlies of each arch. Do you still want to proceed?",
+            message: "Something doesn't seem right. Job expects 3 nightlies of each arch. Do you still want to proceed with given nightlies $nightly_list ?",
             parameters: [
                 booleanParam(
                     defaultValue: false,

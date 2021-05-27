@@ -88,8 +88,7 @@ node {
                 )
             ]
         )
-        print(resp)
-        if (!resp.PROCEED) {
+        if (!resp) {
             error("Aborting.")
         }
     }

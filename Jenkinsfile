@@ -82,7 +82,7 @@ node {
                     string(
                         name: 'IN_FLIGHT_PREV',
                         description: 'This is the in flight release version of previous minor version of OCP. Leave blank to be prompted later in the job. Used to fill upgrade suggestions.',
-                        defaultValue: false,
+                        defaultValue: "",
                         trim: true,
                     ),
                     booleanParam(

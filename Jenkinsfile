@@ -28,6 +28,11 @@ pipeline {
             defaultValue: "",
             trim: true,
         )
+        booleanParam(
+            name: 'SKIP_ARM64',
+            description: 'Skip mirroring arm64 binary.',
+            defaultValue: false,
+        )
     }
 
     stages {
@@ -48,7 +53,7 @@ pipeline {
         stage("Download binaries") {
             steps {
                 script {
-                    downloadRecursive(params.SOURCES_LOCATION, params.VERSION)
+                    downloadRecursive(params.SOURCES_LOCATION, params.VERSION, params.SKIP_ARM64)
                 }
             }
         }
@@ -65,6 +70,10 @@ pipeline {
     }
 }
 
-def downloadRecursive(path, destination) {
-    sh "wget --recursive --no-parent --reject 'index.html*' --no-directories --directory-prefix ${destination} ${path}"
-}
+def downloadRecursive(path, destination, skip_arm64) {
+    skip_param = ""
+    if (skip_arm64) {
+        skip_param = ",*arm64.tar.gz"
+    }
+    sh "wget --recursive --no-parent --reject 'index.html*${skip_param}' --no-directories --directory-prefix ${destination} ${path}"
+}  

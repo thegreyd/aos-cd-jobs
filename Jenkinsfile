@@ -1,66 +1,108 @@
-properties(
-  [
-    disableConcurrentBuilds(),
-    disableResume(),
-    buildDiscarder(
-      logRotator(
-        artifactDaysToKeepStr: '60',
-        daysToKeepStr: '60')
-    ),
-  ]
-)
+#!/usr/bin/env groovy
+node {
+    checkout scm
+    buildlib = load("pipeline-scripts/buildlib.groovy")
+    commonlib = buildlib.commonlib
+    commonlib.describeJob("check-bugs", """
+        ----------
+        Check Bugs
+        ----------
+        Looks for blocker bugs and potential regressions, report findings on Slack.
 
-// https://issues.jenkins-ci.org/browse/JENKINS-33511
-def set_workspace() {
-  if(env.WORKSPACE == null) {
-    env.WORKSPACE = WORKSPACE = pwd()
-  }
+        Timing: Daily run, scheduled.
+    """)
 }
 
-node('openshift-build-1') {
-  try {
-    timeout(time: 30, unit: 'MINUTES') {
-      deleteDir()
-      set_workspace()
-      dir('aos-cd-jobs') {
-        stage('clone') {
-          checkout scm
-          sh 'git checkout master'
-        }
-        stage('run') {
-          final url = sh(
-            returnStdout: true,
-            script: 'git config remote.origin.url')
-          if(!(url =~ /^[-\w]+@[-\w]+(\.[-\w]+)*:/)) {
-            error('This job uses ssh keys for auth, please use an ssh url')
-          }
-          def prune = true, key = 'openshift-bot'
-          if(url.trim() != 'git@github.com:openshift/aos-cd-jobs.git') {
-            prune = false
-            key = "${(url =~ /.*:([^\/]+)/)[0][1]}-aos-cd-bot"
-          }
-          sshagent([key]) {
-            sh """\
-virtualenv ../env/ -p python3
-. ../env/bin/activate
-pip install gitpython
-export GIT_PYTHON_TRACE=full
-${prune ? 'python -m aos_cd_jobs.pruner' : 'echo Fork, skipping pruner'}
-python -m aos_cd_jobs.updater
-"""
-          }
-        }
-      }
+pipeline {
+    agent any
+
+    options {
+        disableResume()
+        skipDefaultCheckout()
     }
-  } catch(err) {
-    mail(
-      to: 'jupierce@redhat.com',
-      from: "aos-cicd@redhat.com",
-      subject: 'aos-cd-jobs-branches job: error',
-      body: """\
-Encountered an error while running the aos-cd-jobs-branches job: ${err}\n\n
-Jenkins job: ${env.BUILD_URL}
-""")
-    throw err
-  }
+
+    parameters {
+        choice(
+            name: "BUILD_VERSION",
+            description: "OSE Version",
+            choices: commonlib.ocpMajorVersions['all'],
+        )
+    }
+
+    stages {
+        stage("check-blockers") {
+            steps {
+                script {
+                    blocker_bugs = commonlib.shell(
+                        returnStdout: true,
+                        script: """
+                            ${buildlib.ELLIOTT_BIN}
+                            --group openshift-${params.BUILD_VERSION}
+                            find-bugs
+                            --mode blocker
+                            --report
+                        """.stripIndent().tr("\n", " ").trim()
+                    ).trim()
+                }
+            }
+        }
+        stage("check-regressions") {
+            steps {
+                script {
+                    if (next_is_prerelease(params.BUILD_VERSION)) {
+                        return
+                    }
+                    bugs = commonlib.shell(
+                        returnStdout: true,
+                        script: """
+                            ${buildlib.ELLIOTT_BIN}
+                            --group openshift-${params.BUILD_VERSION}
+                            find-bugs
+                            --mode sweep
+                            | tail -n1
+                            | cut -d':' -f2
+                            | tr -d ,
+                        """.stripIndent().tr("\n", " ").trim()
+                    ).trim()
+
+                    potential_regressions = commonlib.shell(
+                        returnStdout: true,
+                        script: """
+                            ${buildlib.ELLIOTT_BIN}
+                            --group openshift-${params.BUILD_VERSION}
+                            verify-bugs ${bugs}
+                        """.stripIndent().tr("\n", " ").trim()
+                    ).trim()
+                }
+            }
+        }
+        stage("slack-notification") {
+            steps {
+                script {
+                    commonlib.slacklib.to(params.BUILD_VERSION).say("""
+                    *blocker bugs*
+                    ```
+                    ${blocker_bugs}
+                    ```
+
+                    *potential regressions*
+                    ```
+                    ${potential_regressions}
+                    ```
+                    """)
+                }
+            }
+        }
+    }
+}
+
+def next_is_prerelease(version) {
+    def (major, minor) = commonlib.extractMajorMinorVersionNumbers(version)
+    def next_version = major.toString() + '.' + (minor + 1).toString()
+    try {
+        return commonlib.ocpReleaseState[next_version]['release'].isEmpty()
+    } catch (Exception e) {
+        // there is no "next_version" release defined in ocpReleaseState
+        return true
+    }
 }

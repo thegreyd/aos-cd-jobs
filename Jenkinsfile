@@ -265,29 +265,6 @@ timeout(activity: true, time: 1, unit: 'DAYS') {  // if there is no log activity
 
             }
 
-            echo """
-
-
-    Results have been printed above and archived in this job. To submit them to prodsec:
-    1. Visit https://redhat.service-now.com/
-    2. Select "Create Incident"
-    3. Open a new SNow ticket with:
-    - Assignment Group set to "Product Security";
-    - Impact set to "4", Urgency set to "4";
-    - Categorization
-      - Category: Product Security
-      - Topic: Support/Information Request
-    - Short description "OpenShift 4.Y Feature Freeze Coverity Scan Results"
-    - The Description (body) of the ticket be the pasted content of the Jenkins
-      "prodsec-report.txt" artifact.
-    - The ticket should come from an address of an actual person or team, so
-      that Incoming can respond back with further clarification questions if
-      needed.
-    4. Send an email to prodsec-openshift@redhat.com to alert them to the ticket.
-
-    Example ticket: https://redhat.service-now.com/surl.do?n=INC1389259
-    """
-
         }
     }
 }

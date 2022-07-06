@@ -243,6 +243,9 @@ def ocpVersionParam(name='MINOR_VERSION', majorVersion='all', extraOpts=[]) {
 
 def jiraModeParam(default_mode='') {
     def choices = [default_mode]
+    if (!('' in choices)) {
+        choices << ''
+    }
     if (!('USEJIRA' in choices)) {
         choices << 'USEJIRA'
     }

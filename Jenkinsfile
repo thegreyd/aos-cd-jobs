@@ -4,6 +4,7 @@ node {
     checkout scm
     def buildlib = load("pipeline-scripts/buildlib.groovy")
     def commonlib = buildlib.commonlib
+    def slacklib = commonlib.slacklib
     commonlib.describeJob("sweep", """
         <h2>Sweep bugs</h2>
         <b>Timing</b>: This runs after component builds (ocp3/ocp4/custom jobs),
@@ -19,10 +20,6 @@ node {
         group.yml.
         For 3.11, all bugs are swept into the rpm advisory.
         For 4.y, bugs are swept into the image or extras advisory.
-        CVEs are not currently swept by this job.
-
-        Optionally, builds from our brew candidate tags may also be swept. If necessary,
-        the advisory will be first set to NEW_FILES.
     """)
 
 
@@ -42,17 +39,20 @@ node {
                 parameterDefinitions: [
                     commonlib.ocpVersionParam('BUILD_VERSION'),
                     booleanParam(
-                        name: 'SWEEP_BUILDS',
-                        defaultValue: false,
-                        description: 'Attach builds to default advisories',
-                    ),
-                    booleanParam(
                         name: 'ATTACH_BUGS',
                         defaultValue: false,
                         description: [
                           'If <b>on</b>: Attach MODIFIED, ON_QA, and VERIFIED bugs to their advisories',
                           'If <b>off</b>: Set MODIFIED bugs to ON_QA. Do not change advisories',
                         ].join('\n')
+                    ),
+                    commonlib.jiraModeParam(default='USEJIRA'),
+                    string(
+                        name: "SLACK_CHANNEL",
+                        description: 'Slack channel to be notified in case of failures. ' +
+                                    'Example: #art-automation-debug ' +
+                                    'Leave blank to notify <strong>#art-release-<BUILD_VERSION></strong>',
+                        trim: true,
                     ),
                     commonlib.dryrunParam(),
                     commonlib.mockParam(),
@@ -61,79 +61,80 @@ node {
         ]
     )
 
+    // Check for mock build
     commonlib.checkMock()
 
-    stage("Init") {
-        version = params.BUILD_VERSION
-        doozerOpts = "--group openshift-${version}"
+    // Init
+    echo "Initializing bug sweep for ${params.BUILD_VERSION}. Sync: #${currentBuild.number}"
+    currentBuild.displayName = "${params.BUILD_VERSION}"
 
-        echo "Initializing bug sweep for ${version}. Sync: #${currentBuild.number}"
-        currentBuild.displayName = "${version} bug sweep"
+    // Clean workspace
+    sh "rm -rf ./artcd_working && mkdir -p ./artcd_working"
 
-        buildlib.elliott "--version"
-        echo "${buildlib.ELLIOTT_BIN}"
-
-        buildlib.kinit()
-    }
-
-    // short circuit to UNSTABLE (not FAILURE) when automation is frozen
-    if (!buildlib.isBuildPermitted(doozerOpts)) {
-        currentBuild.result = 'UNSTABLE'
-        currentBuild.description = 'Builds not permitted'
-        echo('This build is being terminated because it is not permitted according to current group.yml')
-        return
-    }
-
+    // Sweep bugs
     stage("Sweep bugs") {
         currentBuild.description = "Sweeping new bugs<br/>"
 
-        if (params.ATTACH_BUGS) {
-            currentBuild.description += "* Attaching MODIFIED, ON_QA, and VERIFIED bugs to default advisories<br/>"
-            cmd = [
-                "--group=openshift-${version}",
-                "find-bugs",
-                "--mode sweep",
-                "--cve-trackers",
-                "--status MODIFIED",
-                "--status ON_QA",
-                "--status VERIFIED",
-                "--into-default-advisories",
-            ]
-        } else {
-            currentBuild.description += "* Changing MODIFIED bugs to ON_QA<br/>"
-            cmd = [
-                "--group=openshift-${version}",
-                "find-bugs",
-                "--cve-trackers",
-                "--mode qe",
-            ]
-        }
+        def cmd = [
+            "artcd",
+            "-vvv",
+            "--working-dir=./artcd_working",
+            "--config=./config/artcd.toml"
+        ]
 
         if (params.DRY_RUN) {
             cmd << "--dry-run"
         }
 
-        retry (3) {
-            try {
-                buildlib.elliott(cmd.join(' '))
-            } catch (Exception elliottErr) {
-                echo("Error attaching bugs to advisories (will retry a few times):\n${elliottErr}")
-                sleep(time: 1, unit: 'MINUTES')
-                throw elliottErr
+        cmd << "sweep-bugs" << "--version=${params.BUILD_VERSION}"
+
+        if (params.ATTACH_BUGS) {
+            cmd << "--attach-bugs"
+        }
+
+        echo "Running command: ${cmd}"
+
+        // Execute script
+        def env = []
+        if (params.JIRA_MODE) {
+            env << "${params.JIRA_MODE}=True"
+        }
+        withEnv(env) {
+            exitCode = commonlib.shell(script: cmd.join(' '), returnStatus: true)
+        }
+        echo("command ${cmd} returned with status ${exitCode}")
+
+        /* Handle exit code, defined as:
+            0 = SUCCESS
+            1 = RUNTIME_ERROR
+            2 = BUILD_NOT_PERMITTED
+            3 = DRY_RUN
+        */
+        if (exitCode == 0) {
+            currentBuild.displayName += " - bug sweep"
+            currentBuild.result = 'SUCCESS'
+            if (params.ATTACH_BUGS) {
+                channel = params.SLACK_CHANNEL.isEmpty() ? params.BUILD_VERSION : params.SLACK_CHANNEL
+                slacklib.to(channel).say("""
+                    :warning: @release-artists note: the sweep job was used to sweep *bugs* into advisories.
+                    buildvm job: ${commonlib.buildURL('console')}
+                """)
             }
         }
-    }
-
-    stage("Sweep builds") {
-        if (!params.SWEEP_BUILDS) {
-            currentBuild.description += "* Not sweeping builds\n"
-            return
+        if (exitCode == 1) {
+            currentBuild.result = 'FAILURE'
+            currentBuild.displayName += ' - runtime error'
+            echo('Runtime errors were raised during the build. Check the logs for details')
         }
-        if (params.DRY_RUN) {
-            echo("Skipping attach builds to advisory for dry run")
-            return
+        if (exitCode == 2) {
+            currentBuild.displayName += ' - automation frozen'
+            currentBuild.result = 'UNSTABLE'
+            currentBuild.description = 'Builds not permitted'
+            echo('This build did not run as it is not permitted according to current group.yml')
         }
-        buildlib.attachBuildsToAdvisory(["rpm", "image"], params.BUILD_VERSION)
+        if (exitCode == 3) {
+            currentBuild.displayName += " - dry run"
+            echo('This build was run in dry run mode')
+        }
     }
-    currentBuild.description = "Ran without errors\n---------------\n" + currentBuild.description
 }

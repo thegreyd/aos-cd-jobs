@@ -1,3 +1,4 @@
+
 slacklib = load("pipeline-scripts/slacklib.groovy")
 
 ocp3Versions = [
@@ -6,18 +7,52 @@ ocp3Versions = [
 
 // All buildable versions of ocp4
 ocp4Versions = [
+    "4.12",
+    "4.11",
+    "4.10",
+    "4.9",
+    "4.8",
     "4.7",
     "4.6",
-    "4.5",
-    "4.4",
-    "4.3",
-    "4.2",
 ]
 
 ocpVersions = ocp4Versions + ocp3Versions
 
+// some of our systems refer to golang's chosen architecture nomenclature;
+// most use brew's nomenclature or similar. translate.
+brewArches = ["x86_64", "s390x", "ppc64le", "aarch64", "multi"]
+brewArchSuffixes = ["", "-s390x", "-ppc64le", "-aarch64", "-multi"]
+goArches = ["amd64", "s390x", "ppc64le", "arm64", "multi"]
+goArchSuffixes = ["", "-s390x", "-ppc64le", "-arm64", "-multi"]
+def goArchForBrewArch(String brewArch) {
+    if (brewArch in goArches) return brewArch  // allow to already be a go arch, just keep same
+    if (brewArch in brewArches)
+        return goArches[brewArches.findIndexOf {it == brewArch}]
+    error("no such brew arch '${brewArch}' - cannot translate to golang arch")
+}
+def brewArchForGoArch(String goArch) {
+    // some of our systems refer to golang's chosen nomenclature; translate to what we use in brew
+    if (goArch in brewArches) return goArch  // allow to already be a brew arch, just keep same
+    if (goArch in goArches)
+        return brewArches[goArches.findIndexOf {it == goArch}]
+    error("no such golang arch '${goArch}' - cannot translate to brew arch")
+}
+// imagestreams and file names often began without consideration for multi-arch and then
+// added a suffix everywhere to accommodate arches (but kept the legacy location for x86).
+def brewSuffixForArch(String arch) {
+    arch = brewArchForGoArch(arch)  // translate either incoming arch style
+    return brewArchSuffixes[brewArches.findIndexOf {it == arch}]
+}
+def goSuffixForArch(String arch) {
+    arch = goArchForBrewArch(arch)  // translate either incoming arch style
+    return goArchSuffixes[goArches.findIndexOf {it == arch}]
+}
+
 /**
- * Why is ocp4ReleaseState needed?
+ * Why is ocpReleaseState needed?
+ *
+ * To decide whether to build and use signed RPMs, and to decide if a strict
+ * bug validation flow is necessary.
  *
  * Before auto-signing, images were either built signed or unsigned.
  * Unsigned images were the norm and then, right before GA, we would rebuild
@@ -60,10 +95,30 @@ ocpVersions = ocp4Versions + ocp3Versions
  * Alternatively, maybe this becomes the source of truth and confusing aspects like
  * 'archOverrides' goes away in doozer config.
  */
-ocp4ReleaseState = [
-        "4.7": [
+ocpReleaseState = [
+        "4.12": [
             'release': [],
             "pre-release": [ 'x86_64', 's390x', 'ppc64le', 'aarch64' ],
+        ],
+        "4.11": [
+            'release': ['x86_64', 's390x', 'ppc64le', 'aarch64'],
+            "pre-release": [],
+        ],
+        "4.10": [
+            'release': ['x86_64', 's390x', 'ppc64le', 'aarch64'],
+            "pre-release": [],
+        ],
+        "4.9": [
+            'release': ['x86_64', 's390x', 'ppc64le', 'aarch64'],
+            "pre-release": [],
+        ],
+        "4.8": [
+            'release': [ 'x86_64', 's390x', 'ppc64le' ],
+            "pre-release": [ 'aarch64' ],
+        ],
+        "4.7": [
+            'release': [ 'x86_64', 's390x', 'ppc64le' ],
+            "pre-release": [ 'aarch64' ],
         ],
         "4.6": [
             'release': [ 'x86_64', 's390x', 'ppc64le' ],
@@ -88,7 +143,11 @@ ocp4ReleaseState = [
         "4.1": [
             "release": [ 'x86_64' ],
             "pre-release": [],
-        ]
+        ],
+        "3.11": [
+            "release": [ 'x86_64' ],
+            "pre-release": [ 'ppc64le', 's390x', 'aarch64' ],
+        ],
 ]
 
 ocpMajorVersions = [
@@ -98,7 +157,6 @@ ocpMajorVersions = [
 ]
 
 ocpBaseImages = [
-        "ansible.runner",
         "elasticsearch",
         "jboss.openjdk18.rhel7",
         "rhscl.nodejs.6.rhel7",
@@ -156,6 +214,15 @@ def mockParam() {
     ]
 }
 
+def doozerParam() {
+    return [
+        name: 'DOOZER_COMMIT',
+        description: 'Override the doozer submodule; Format is ghuser@commitish e.g. jupierce@covscan-to-podman-2',
+        $class: 'hudson.model.StringParameterDefinition',
+        defaultValue: ''
+    ]
+}
+
 def dryrunParam(description = 'Run job without side effects') {
     return [
         name: 'DRY_RUN',
@@ -165,12 +232,28 @@ def dryrunParam(description = 'Run job without side effects') {
     ]
 }
 
-def ocpVersionParam(name='MINOR_VERSION', majorVersion='all') {
+def ocpVersionParam(name='MINOR_VERSION', majorVersion='all', extraOpts=[]) {
     return [
         name: name,
         description: 'OSE Version',
         $class: 'hudson.model.ChoiceParameterDefinition',
-        choices: ocpMajorVersions[majorVersion].join('\n'),
+        choices: (extraOpts + ocpMajorVersions[majorVersion]).join('\n'),
+    ]
+}
+
+def jiraModeParam(default='') {
+    def choices = [default]
+    if (!('USEJIRA' in choices)) {
+        choices << 'USEJIRA'
+    }
+    if (!('ONLYJIRA' in choices)) {
+        choices << 'ONLYJIRA'
+    }
+    return [
+        name: 'JIRA_MODE',
+        description: 'Run with jira as additional bug tracker - usejira or onlyjira',
+        $class: 'hudson.model.ChoiceParameterDefinition',
+        choices: choices
     ]
 }
 
@@ -288,7 +371,12 @@ Console Log: ${buildURL('console')}
         to = args.to ?: args.cc ?: args.bcc ?: "NOBODY"
         to = to.replaceAll(/[^@.\w]+/, "_")
         subject = args.get("subject", "NO SUBJECT").replaceAll(/\W+/, "_")
-        filename = String.format("email/email%03d-%s-%s.txt", ++emailIndex, to, subject)
+
+        def filename_ext = ".txt"
+        def max_filename_len = 251 - filename_ext.size()
+        filename = "email/" +
+                   String.format("email%03d-%s-%s", ++emailIndex, to, subject).take(max_filename_len) +
+                   filename_ext
 
         // this is a bit silly but writeYaml and writeFile lack finesse
         body = args.remove("body")  // unreadable when written as yaml
@@ -395,7 +483,9 @@ def shell(arg) {
         writeFile file: "${filebase}.cmd.txt", text: script  // save cmd as context for archives
         // note that archival requires the location relative to workspace
         def relFilebase = filebase.minus("${env.WORKSPACE}/")
-        safeArchiveArtifacts(["${relFilebase}.*"])
+        dir(env.WORKSPACE) {  // always archive from workspace context since we wrote it there
+            safeArchiveArtifacts(["${relFilebase}.*"])
+        }
     }
 
     try {
@@ -464,15 +554,34 @@ def extractMajorMinorVersionNumbers(String version) {
 }
 
 /**
+ * Given a SemVer version string x.y.z,
+ * returns true if and only if the release contains a pre-release component.
+ * e.g. "4.1.0-rc.9" => true
+ * https://semver.org/spec/v2.0.0.html#spec-item-9
+ */
+String isPreRelease(String version) {
+    return (version =~ /^(\d+\.\d+\.\d+)(-?)/)[0][2] == "-"
+}
+
+/**
     Returns the architecture name extracted from a release name.
     Only known architecture names are recognized, defaulting to `defaultArch`.
     e.g.
-        "4.4.0-0.nightly-ppc64le-2019-11-06-041852" => "ppc64le"
-        "4.4.0-0.nightly-s390x-2019-11-06-041852" => "s390x"
-        "4.4.0-0.nightly-2019-11-06-041852" => "x86_64"
+        "4.8.0-0.nightly-2021-01-06-041852" => "amd64"
+        "4.8.0-0.nightly-ppc64le-2021-01-06-041852" => "ppc64le"
+        "4.8.0-0.nightly-s390x-2021-01-06-041852" => "s390x"
+        "4.8.0-0.nightly-arm64-2021-06-06-041852" => "arm64"
 */
+def extractGoArchFromReleaseName(String release, String defaultArch='amd64') {
+    archs = goArches + brewArches  // should normally be go but we can identify either safely
+    for(arch in goArches) {
+        if(arch in release.split('-')) defaultArch = arch
+    }
+    return goArchForBrewArch(defaultArch)
+}
 def extractArchFromReleaseName(String release, String defaultArch='x86_64') {
-    return (release =~ /(x86_64|ppc64le|s390x)?$/)[0][1] ?: defaultArch
+    // get the *brew* arch from release name which is go arch nomenclature
+    return brewArchForGoArch(extractGoArchFromReleaseName(release, goArchForBrewArch(defaultArch)))
 }
 
 /**
@@ -501,19 +610,25 @@ def canLock(lockName, timeout_seconds=10) {
 
 /**
  * Each OCP architecture gets its own release controller. They are hosted
- * on different routes. This method returns a URL based on the name of the
+ * on different routes. This method returns the golang arch name used by the
+ * release controller based on the name of the
  * release stream you want to query.
- * @param releaseStreamName - e.g. 4-stable or 4-stable-s390x
- * @return Returns something like "https://s390x.ocp.releases.ci.openshift.org"
+ * @param releaseStreamName or nightly name - e.g. 4-stable or 4-stable-s390x or 4.9.0-0.nightly-s390x-2021-10-08-232627
+ * @return Returns a golang arch name like "s390x" or "amd64"
  */
-def getReleaseControllerURL(releaseStreamName) {
+def getReleaseControllerArch(releaseStreamName) {
     def arch = 'amd64'
     def streamNameComponents = releaseStreamName.split('-') // e.g. ['4', 'stable', 's390x']  or [ '4', 'stable' ]
-    if ('s390x' in streamNameComponents) {
-        arch = "s390x" // e.g. -s390x
-    } else if ('ppc64le' in streamNameComponents) {
-        arch = "ppc64le"
+    for(goArch in goArches) {
+        if (goArch in streamNameComponents) {
+            arch = goArch
+        }
     }
+    return arch
+}
+
+def getReleaseControllerURL(releaseStreamName) {
+    def arch = getReleaseControllerArch(releaseStreamName)
     return "https://${arch}.ocp.releases.ci.openshift.org"
 }
 
@@ -531,8 +646,10 @@ def inputRequired(slackOutput=null, cl) {
     }
 }
 
-def _retryWithOptions(goal, options, slackOutput=null, prompt='', cl) {
+def _retryWithOptions(goal, options, slackOutput=null, prompt='', reasonFieldDescription='', cl) {
     def success = false
+    def action = ''
+    def reason = ''
     if (!slackOutput) {
         slackOutput = slacklib.to(null)
     }
@@ -550,20 +667,33 @@ def _retryWithOptions(goal, options, slackOutput=null, prompt='', cl) {
                     prompt = "Problem encountered during: ${goal}"
                 }
 
-                def resp = input message: prompt,
-                        parameters: [
-                                [
-                                        $class     : 'hudson.model.ChoiceParameterDefinition',
-                                        choices    : options.join('\n'),
-                                        description : 'Retry this goal, Skip this goal, or Abort the pipeline',
-                                        name       : 'action'
-                                ]
-                        ]
+                def parameters = [
+                    [
+                            $class     : 'hudson.model.ChoiceParameterDefinition',
+                            choices    : options.join('\n'),
+                            description : 'Retry this goal, Skip this goal, or Abort the pipeline',
+                            name       : 'action'
+                    ]
+                ]
+                if (reasonFieldDescription) {
+                    parameters << string(
+                        description: reasonFieldDescription,
+                        name: 'reason',
+                        trim: true,
+                    )
+                }
 
-                def action = (resp instanceof String)?resp:resp.action
+                def resp = input message: prompt, parameters: parameters
+
+                action = (resp instanceof String)?resp:resp.action
+                reason = reasonFieldDescription? resp.reason : ""
 
                 echo "User selected: ${action}"
-                slackOutput.say("User selected: ${action}")
+                def slackMessage = "User selected: ${action}"
+                if (reason) {
+                    slackMessage += "\nThe reason given was: ${reason}"
+                }
+                slackOutput.say(slackMessage)
 
                 switch(action) {
                     case 'RETRY':
@@ -571,24 +701,88 @@ def _retryWithOptions(goal, options, slackOutput=null, prompt='', cl) {
                         break
                     case 'SKIP':
                         echo "User chose to skip."
+                        if (reasonFieldDescription && !reason) {
+                            error("Justification is required but not given. Aborting")
+                        }
                         success = true  // fake it
                         break
                     case 'ABORT':
-                        error('User chose to abort retries of: ${goal}')
+                        error("User chose to abort retries of: ${goal}")
                 }
             }
         }
     }
+    return [action, reason]
 }
 
 // WARNING: make really sure that nothing in the closure is required for
 // functioning after the user chooses SKIP.
-def retrySkipAbort(goal, slackOutput=null, prompt='', cl) {
-    _retryWithOptions(goal, ['RETRY', 'SKIP', 'ABORT'], slackOutput, prompt, cl)
+def retrySkipAbort(goal, slackOutput=null, prompt='', reasonFieldDescription='', cl) {
+    return _retryWithOptions(goal, ['RETRY', 'SKIP', 'ABORT'], slackOutput, prompt, reasonFieldDescription, cl)
 }
 
 def retryAbort(goal, slackOutput=null, prompt='', cl) {
-    _retryWithOptions(goal, ['RETRY', 'ABORT'], slackOutput, prompt, cl)
+    return _retryWithOptions(goal, ['RETRY', 'ABORT'], slackOutput, prompt, cl)
 }
+
+def checkS3Path(s3_path) {
+    if (s3_path.startsWith('/pub/openshift-v4/clients') ||
+        s3_path.startsWith('/pub/openshift-v4/amd64') ||
+        s3_path.startsWith('/pub/openshift-v4/arm64') ||
+        s3_path.startsWith('/pub/openshift-v4/dependencies')) {
+        error("Invalid location on s3 (${s3_path}); these are virtual/read-only locations on the s3 backed mirror. Quality your path with /pub/openshift-v4/<brew_arch_name>/ instead.")
+    }
+}
+
+def syncRepoToS3Mirror(local_dir, s3_path, remove_old=true, timeout_minutes=60) {
+    try {
+        checkS3Path(s3_path)
+        withCredentials([aws(credentialsId: 's3-art-srv-enterprise', accessKeyVariable: 'AWS_ACCESS_KEY_ID', secretKeyVariable: 'AWS_SECRET_ACCESS_KEY')]) {
+            retry(3) {  
+                timeout(time: timeout_minutes, unit: 'MINUTES') { // aws s3 sync has been observed to hang before
+                    // Sync is not transactional. If we update repomd.xml before files it references are populated,
+                    // users of the repo will get a 404. So we run in three passes:
+                    // 1. On the first pass, exclude files like repomd.xml and do not delete any old files. This ensures that we  are only adding
+                    // new rpms, filelist archives, etc.
+                    shell(script: "aws s3 sync --no-progress --exclude '*/repomd.xml' ${local_dir} s3://art-srv-enterprise${s3_path}") // Note that s3_path has / prefix.
+                    // 2. On the second pass, include only the repomd.xml.
+                    shell(script: "aws s3 sync --no-progress --exclude '*' --include '*/repomd.xml' ${local_dir} s3://art-srv-enterprise${s3_path}")
+                    if (remove_old) {
+                        // For most repos, clean up the old rpms so they don't grow unbounded. Specify remove_old=false
+                        // to prevent this step.
+                        // Otherwise:
+                        // 3. Everything should be sync'd in a consistent way -- delete anything old with --delete.
+                        shell(script: "aws s3 sync --no-progress --delete  ${local_dir} s3://art-srv-enterprise${s3_path}")
+                    }                    
+                }
+            }
+        }
+    } catch (e) {
+        slacklib.to("#art-release").say("Failed syncing ${local_dir} repo to art-srv-enterprise S3 path ${s3_path}")
+        throw e
+    }
+}
+
+def syncDirToS3Mirror(local_dir, s3_path, include_only='', timeout_minutes=60) {
+    try {
+        checkS3Path(s3_path)
+        extra_args = ""
+        if (include_only) {
+            // --include only takes effect if files are excluded.
+            extra_args = "--exclude '*' --include '${include_only}'"
+        }
+        withCredentials([aws(credentialsId: 's3-art-srv-enterprise', accessKeyVariable: 'AWS_ACCESS_KEY_ID', secretKeyVariable: 'AWS_SECRET_ACCESS_KEY')]) {
+            retry(3) {  
+                timeout(time: timeout_minutes, unit: 'MINUTES') { // aws s3 sync has been observed to hang before
+                    shell(script: "aws s3 sync --no-progress ${extra_args} --delete  ${local_dir} s3://art-srv-enterprise${s3_path}")
+                }
+            }
+        }
+    } catch (e) {
+        slacklib.to("#art-release").say("Failed syncing ${local_dir} repo to art-srv-enterprise S3 path ${s3_path}")
+        throw e
+    }
+}
+
 
 return this

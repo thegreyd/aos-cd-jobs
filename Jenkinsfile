@@ -1,66 +1,87 @@
-properties(
-  [
-    disableConcurrentBuilds(),
-    disableResume(),
-    buildDiscarder(
-      logRotator(
-        artifactDaysToKeepStr: '60',
-        daysToKeepStr: '60')
-    ),
-  ]
-)
+#!/usr/bin/env groovy
 
-// https://issues.jenkins-ci.org/browse/JENKINS-33511
-def set_workspace() {
-  if(env.WORKSPACE == null) {
-    env.WORKSPACE = WORKSPACE = pwd()
-  }
-}
+node {
+    checkout scm
+    def buildlib = load("pipeline-scripts/buildlib.groovy")
+    def commonlib = buildlib.commonlib
+    commonlib.describeJob("accept-release", """
+        <h2>Accept a release on Release Controller</h2>
+    """)
 
-node('openshift-build-1') {
-  try {
-    timeout(time: 30, unit: 'MINUTES') {
-      deleteDir()
-      set_workspace()
-      dir('aos-cd-jobs') {
-        stage('clone') {
-          checkout scm
-          sh 'git checkout master'
-        }
-        stage('run') {
-          final url = sh(
-            returnStdout: true,
-            script: 'git config remote.origin.url')
-          if(!(url =~ /^[-\w]+@[-\w]+(\.[-\w]+)*:/)) {
-            error('This job uses ssh keys for auth, please use an ssh url')
-          }
-          def prune = true, key = 'openshift-bot'
-          if(url.trim() != 'git@github.com:openshift/aos-cd-jobs.git') {
-            prune = false
-            key = "${(url =~ /.*:([^\/]+)/)[0][1]}-aos-cd-bot"
-          }
-          sshagent([key]) {
-            sh """\
-virtualenv ../env/ -p python3
-. ../env/bin/activate
-pip install gitpython
-export GIT_PYTHON_TRACE=full
-${prune ? 'python -m aos_cd_jobs.pruner' : 'echo Fork, skipping pruner'}
-python -m aos_cd_jobs.updater
-"""
-          }
-        }
-      }
+    // Expose properties for a parameterized build
+    properties(
+        [
+            buildDiscarder(
+                logRotator(
+                    artifactDaysToKeepStr: '7',
+                    daysToKeepStr: '7'
+                )
+            ),
+            [
+                $class: 'ParametersDefinitionProperty',
+                parameterDefinitions: [
+                    string(
+                        name: 'RELEASE_NAME',
+                        description: 'Release name (e.g 4.10.4). Arch is amd64 by default.',
+                        trim: true,
+                        defaultValue: ""
+                    ),
+                    choice(
+                        name: 'ARCH',
+                        description: 'Release architecture (amd64, s390x, ppc64le, arm64)',
+                        choices: ['amd64', 's390x', 'ppc64le', 'arm64'].join('\n'),
+                    ),
+                    string(
+                        name: 'UPGRADE_URL',
+                        description: 'URL to successful upgrade job',
+                        trim: true,
+                        defaultValue: ""
+                    ),
+                    string(
+                        name: 'UPGRADE_MINOR_URL',
+                        description: 'URL to successful upgrade-minor job',
+                        trim: true,
+                        defaultValue: ""
+                    ),
+                    booleanParam(
+                        name: 'CONFIRM',
+                        description: 'Running without this would be a [dry-run]. Must be specified to apply changes to server',
+                        defaultValue: false
+                    ),
+                    commonlib.mockParam(),
+                ]
+            ],
+        ]
+    )
+
+    commonlib.checkMock()
+
+    if (!params.RELEASE_NAME) {
+        error("You must provide a release name")
     }
-  } catch(err) {
-    mail(
-      to: 'jupierce@redhat.com',
-      from: "aos-cicd@redhat.com",
-      subject: 'aos-cd-jobs-branches job: error',
-      body: """\
-Encountered an error while running the aos-cd-jobs-branches job: ${err}\n\n
-Jenkins job: ${env.BUILD_URL}
-""")
-    throw err
-  }
+    if (!params.UPGRADE_URL) {
+        error("You must provide a URL to successful upgrade job")
+    }
+    if (!params.UPGRADE_MINOR_URL) {
+        error("You must provide a URL to successful upgrade-minor job")
+    }
+
+    def dry_run = params.CONFIRM ? '' : '[DRY_RUN]'
+    currentBuild.displayName = "${params.RELEASE_NAME} ${dry_run}"
+
+    def confirm_param = params.CONFIRM ? "--confirm" : ''
+
+    buildlib.withAppCiAsArtPublish() {
+        commonlib.shell(
+            script: """
+                hacks/release_controller/accept.py \
+                  --release ${params.RELEASE_NAME} \
+                  --arch ${params.ARCH} \
+                  --upgrade-url ${params.UPGRADE_URL} \
+                  --upgrade-minor-url ${params.UPGRADE_MINOR_URL} \
+                  ${confirm_param}
+                """,
+        )
+    }
+    buildlib.cleanWorkspace()
 }

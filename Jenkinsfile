@@ -64,7 +64,7 @@ node {
     buildlib.withAppCiAsArtPublish() {
         commonlib.shell(
             script: """
-                scl enable rh-python38 -- python3 release-tool.py -a ${params.ARCH} ${confirm_param} --context ocp/api.ci.l2s4.p1.openshiftapps.com:6443/$(oc whoami) ${action} ${params.RELEASE_NAME}
+                scl enable rh-python38 -- python3 release-tool.py -a ${params.ARCH} ${confirm_param} --context ocp/api.ci.l2s4.p1.openshiftapps.com:6443/\$(oc whoami) ${action} ${params.RELEASE_NAME}
                 """,
         )
     }

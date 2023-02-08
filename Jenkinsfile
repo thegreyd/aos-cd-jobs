@@ -59,16 +59,12 @@ node {
     def action = params.REJECT ? "reject" : 'accept'
     def confirm_param = params.CONFIRM ? "--execute" : ''
 
-    sh "wget https://raw.githubusercontent.com/openshift/release-controller/master/hack/release-tool.py && chmod +x release-tool.py"
+    sh "wget https://raw.githubusercontent.com/openshift/release-controller/master/hack/release-tool.py"
     
     buildlib.withAppCiAsArtPublish() {
         commonlib.shell(
             script: """
-                scl enable rh-python38 -- python3 release-tool.py \
-                  ${action} \
-                  ${params.RELEASE_NAME} \
-                  --architecture ${params.ARCH} \
-                  ${confirm_param}
+                scl enable rh-python38 -- python3 release-tool.py -a ${params.ARCH} ${confirm_param} ${action} ${params.RELEASE_NAME}
                 """,
         )
     }

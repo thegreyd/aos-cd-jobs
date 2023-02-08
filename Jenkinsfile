@@ -62,7 +62,8 @@ node {
     buildlib.withAppCiAsArtPublish() {
         commonlib.shell(
             script: """
-                wget "https://raw.githubusercontent.com/openshift/release-controller/master/hack/release-tool.py;
+                wget "https://raw.githubusercontent.com/openshift/release-controller/master/hack/release-tool.py
+                chmod +x release-tool.py
                 ./release-tool.py \
                   ${action} \
                   ${params.RELEASE_NAME} \

@@ -64,7 +64,7 @@ node {
     buildlib.withAppCiAsArtPublish() {
         commonlib.shell(
             script: """
-                ./release-tool.py \
+                scl enable rh-python38 -- ./release-tool.py \
                   ${action} \
                   ${params.RELEASE_NAME} \
                   --architecture ${params.ARCH} \

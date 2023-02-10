@@ -1,66 +1,111 @@
-properties(
-  [
-    disableConcurrentBuilds(),
-    disableResume(),
-    buildDiscarder(
-      logRotator(
-        artifactDaysToKeepStr: '60',
-        daysToKeepStr: '60')
-    ),
-  ]
-)
+#!/usr/bin/env groovy
+node {
+    checkout scm
+    commonlib = load("pipeline-scripts/commonlib.groovy")
 
-// https://issues.jenkins-ci.org/browse/JENKINS-33511
-def set_workspace() {
-  if(env.WORKSPACE == null) {
-    env.WORKSPACE = WORKSPACE = pwd()
-  }
-}
+    location = [
+        "crc": "/mnt/redhat/staging-cds/developer/crc/%s/staging/",
+        "helm": "/mnt/redhat/staging-cds/developer/helm/%s/staging/",
+        "kam": "/mnt/redhat/staging-cds/developer/openshift-gitops-kam/%s/staging/",
+        "serverless": "/mnt/redhat/staging-cds/developer/openshift-serverless-clients/%s/staging/",
+        "odo": "/mnt/redhat/staging-cds/developer/odo/%s/staging/",
+        "rosa": "/mnt/redhat/staging-cds/etera/rosa/%s/staging/",
+        "pipelines": "/mnt/redhat/staging-cds/developer/openshift-pipeline-clients/%s/staging/",
+    ]
 
-node('openshift-build-1') {
-  try {
-    timeout(time: 30, unit: 'MINUTES') {
-      deleteDir()
-      set_workspace()
-      dir('aos-cd-jobs') {
-        stage('clone') {
-          checkout scm
-          sh 'git checkout master'
+    prefixes = [
+        "odo": "v",
+    ]
+
+    commonlib.describeJob("client_sync", """
+        --------------------------
+        Sync developer client binaries to mirror
+        --------------------------
+        From: https://download.eng.bos.redhat.com/staging-cds/developer/
+        To: http://mirror.openshift.com/pub/openshift-v4/x86_64/clients/
+
+        Supported clients:
+        ${location.keySet().each { println "${it}" }}
+
+        Timing: This is only ever run by humans, upon request.
+    """)
+
+    properties(
+        [
+            disableResume(), 
+            buildDiscarder(logRotator(artifactDaysToKeepStr: '365', daysToKeepStr: '365')),
+            [
+                $class: 'ParametersDefinitionProperty',
+                parameterDefinitions: [
+                    choice(
+                        name: "KIND",
+                        description: "What binary type to sync",
+                        choices: location.keySet().join('\n')
+                    ),
+                    string(
+                        name: "SOURCE_VERSION",
+                        description: "Example: 1.24.0-0",
+                        defaultValue: "",
+                        trim: true,
+                    ),
+                    booleanParam(
+                        name: "SET_LATEST",
+                        description: "Update /latest",
+                        defaultValue: true,
+                    ),
+                    booleanParam(
+                        name: "DRY_RUN",
+                        description: "Run without updating mirror",
+                        defaultValue: false,
+                    ),
+                    commonlib.mockParam(),
+                ]
+            ],
+        ]
+    )
+
+    commonlib.checkMock()
+
+    def kind = params.KIND
+    def source_version = params.SOURCE_VERSION
+
+    currentBuild.displayName = "#${currentBuild.number} - ${kind} ${source_version}${(params.DRY_RUN) ? " [DRY_RUN]" : ""}"
+
+    stage("Validate params") {
+        if (!source_version) {
+            error 'SOURCE_VERSION must be specified'
         }
-        stage('run') {
-          final url = sh(
-            returnStdout: true,
-            script: 'git config remote.origin.url')
-          if(!(url =~ /^[-\w]+@[-\w]+(\.[-\w]+)*:/)) {
-            error('This job uses ssh keys for auth, please use an ssh url')
-          }
-          def prune = true, key = 'openshift-bot'
-          if(url.trim() != 'git@github.com:openshift/aos-cd-jobs.git') {
-            prune = false
-            key = "${(url =~ /.*:([^\/]+)/)[0][1]}-aos-cd-bot"
-          }
-          sshagent([key]) {
-            sh """\
-virtualenv ../env/ -p python3
-. ../env/bin/activate
-pip install gitpython
-export GIT_PYTHON_TRACE=full
-${prune ? 'python -m aos_cd_jobs.pruner' : 'echo Fork, skipping pruner'}
-python -m aos_cd_jobs.updater
-"""
-          }
-        }
-      }
+        dest_version = "${(kind in prefixes) ? prefixes[kind] : ""}${source_version}"
+        source_dir = String.format(location[kind], source_version)
+        latest_dir = "latest/"
     }
-  } catch(err) {
-    mail(
-      to: 'jupierce@redhat.com',
-      from: "aos-cicd@redhat.com",
-      subject: 'aos-cd-jobs-branches job: error',
-      body: """\
-Encountered an error while running the aos-cd-jobs-branches job: ${err}\n\n
-Jenkins job: ${env.BUILD_URL}
-""")
-    throw err
-  }
+
+    stage("Sync to mirror") {
+        s3_target_dir = "/pub/openshift-v4/x86_64/clients/${kind}/${dest_version}/"
+        commonlib.shell([
+            "set -euxo pipefail",
+            "tree ${source_dir}",
+            "cat ${source_dir}/sha256sum.txt"
+        ].join('\n'))
+        println("params.DRY_RUN: ${params.DRY_RUN}")
+        if (params.DRY_RUN) {
+            println("Would have s3 sync'ed ${source_dir} to ${s3_target_dir}")
+        } else {
+            commonlib.syncDirToS3Mirror(source_dir, s3_target_dir)
+        }
+
+        if (params.SET_LATEST) {
+            s3_latest_dir = "/pub/openshift-v4/x86_64/clients/${kind}/latest/"
+            commonlib.shell([
+                "set -euxo pipefail",
+                "rm -rf ${latest_dir}",
+                "cp -aL ${source_dir} ${latest_dir}",
+            ].join('\n'))
+            if (params.DRY_RUN) {
+                println("Would have s3 sync'ed ${latest_dir} to ${s3_latest_dir}")
+            } else {
+                commonlib.syncDirToS3Mirror(latest_dir, s3_latest_dir)
+            }
+        }
+    }
 }

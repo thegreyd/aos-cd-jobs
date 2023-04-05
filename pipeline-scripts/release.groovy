@@ -489,172 +489,172 @@ def stagePublishMultiClient(quay_url, from_release_tag, release_name, client_typ
 
 }
 
-def stagePublishClient(quay_url, from_release_tag, release_name, arch, client_type) {
-    def (major, minor) = commonlib.extractMajorMinorVersionNumbers(release_name)
+// def stagePublishClient(quay_url, from_release_tag, release_name, arch, client_type) {
+//     def (major, minor) = commonlib.extractMajorMinorVersionNumbers(release_name)
 
-    // Anything under this directory will be sync'd to the mirror
-    def BASE_TO_MIRROR_DIR="${WORKSPACE}/to_mirror/openshift-v4"
-    sh "rm -rf ${BASE_TO_MIRROR_DIR}"
+//     // Anything under this directory will be sync'd to the mirror
+//     def BASE_TO_MIRROR_DIR="${WORKSPACE}/to_mirror/openshift-v4"
+//     sh "rm -rf ${BASE_TO_MIRROR_DIR}"
 
-    // From the newly built release, extract the client tools into the workspace following the directory structure
-    // we expect to publish to mirror
-    def CLIENT_MIRROR_DIR="${BASE_TO_MIRROR_DIR}/${arch}/clients/${client_type}/${release_name}"
-    sh "mkdir -p ${CLIENT_MIRROR_DIR}"
+//     // From the newly built release, extract the client tools into the workspace following the directory structure
+//     // we expect to publish to mirror
+//     def CLIENT_MIRROR_DIR="${BASE_TO_MIRROR_DIR}/${arch}/clients/${client_type}/${release_name}"
+//     sh "mkdir -p ${CLIENT_MIRROR_DIR}"
 
-    if ( arch == 'x86_64' ) {
-        // oc image  extract requires an empty destination directory. So do this before extracting tools.
-        // oc adm release extract --tools does not require an empty directory.
-        def oc_mirror_extract_cmd = """
-            # If the release payload contains an oc-mirror artifact image, then extract the oc-mirror binary.
-            if oc adm release info ${quay_url}:${from_release_tag} --image-for=oc-mirror ; then
-                MOBY_DISABLE_PIGZ=true GOTRACEBACK=all oc image extract `oc adm release info ${quay_url}:${from_release_tag} --image-for=oc-mirror` --path /usr/bin/oc-mirror:${CLIENT_MIRROR_DIR}
-                pushd ${CLIENT_MIRROR_DIR}
-                tar zcvf oc-mirror.tar.gz oc-mirror
-                sha256sum oc-mirror.tar.gz >> sha256sum.txt
-                rm oc-mirror
-                popd
-            fi
-        """
-        commonlib.shell(script: oc_mirror_extract_cmd)
-    }
+//     if ( arch == 'x86_64' ) {
+//         // oc image  extract requires an empty destination directory. So do this before extracting tools.
+//         // oc adm release extract --tools does not require an empty directory.
+//         def oc_mirror_extract_cmd = """
+//             # If the release payload contains an oc-mirror artifact image, then extract the oc-mirror binary.
+//             if oc adm release info ${quay_url}:${from_release_tag} --image-for=oc-mirror ; then
+//                 MOBY_DISABLE_PIGZ=true GOTRACEBACK=all oc image extract `oc adm release info ${quay_url}:${from_release_tag} --image-for=oc-mirror` --path /usr/bin/oc-mirror:${CLIENT_MIRROR_DIR}
+//                 pushd ${CLIENT_MIRROR_DIR}
+//                 tar zcvf oc-mirror.tar.gz oc-mirror
+//                 sha256sum oc-mirror.tar.gz >> sha256sum.txt
+//                 rm oc-mirror
+//                 popd
+//             fi
+//         """
+//         commonlib.shell(script: oc_mirror_extract_cmd)
+//     }
 
-    def tools_extract_cmd = "MOBY_DISABLE_PIGZ=true GOTRACEBACK=all oc adm release extract --tools --command-os='*' -n ocp " +
-                                " --to=${CLIENT_MIRROR_DIR} --from ${quay_url}:${from_release_tag}"
+//     def tools_extract_cmd = "MOBY_DISABLE_PIGZ=true GOTRACEBACK=all oc adm release extract --tools --command-os='*' -n ocp " +
+//                                 " --to=${CLIENT_MIRROR_DIR} --from ${quay_url}:${from_release_tag}"
 
-    commonlib.shell(script: tools_extract_cmd)
-    commonlib.shell("cd ${CLIENT_MIRROR_DIR}\n" + '''
-# External consumers want a link they can rely on.. e.g. .../latest/openshift-client-linux.tgz .
-# So whatever we extract, remove the version specific info and make a symlink with that name.
-for f in *.tar.gz *.bz *.zip *.tgz ; do
+//     commonlib.shell(script: tools_extract_cmd)
+//     commonlib.shell("cd ${CLIENT_MIRROR_DIR}\n" + '''
+// # External consumers want a link they can rely on.. e.g. .../latest/openshift-client-linux.tgz .
+// # So whatever we extract, remove the version specific info and make a symlink with that name.
+// for f in *.tar.gz *.bz *.zip *.tgz ; do
 
-    # Is this already a link?
-    if [[ -L "$f" ]]; then
-        continue
-    fi
+//     # Is this already a link?
+//     if [[ -L "$f" ]]; then
+//         continue
+//     fi
 
-    # example file names:
-    #  - openshift-client-linux-4.3.0-0.nightly-2019-12-06-161135.tar.gz
-    #  - openshift-client-mac-4.3.0-0.nightly-2019-12-06-161135.tar.gz
-    #  - openshift-install-mac-4.3.0-0.nightly-2019-12-06-161135.tar.gz
-    #  - openshift-client-linux-4.1.9.tar.gz
-    #  - openshift-install-mac-4.3.0-0.nightly-s390x-2020-01-06-081137.tar.gz
-    #  ...
-    # So, match, and store in a group, any character up to the point we find -DIGIT. Ignore everything else
-    # until we match (and store in a group) one of the valid file extensions.
-    if [[ "$f" =~ ^([^-]+)((-[^0-9][^-]+)+)-[0-9].*(tar.gz|tgz|bz|zip)$ ]]; then
-        # Create a symlink like openshift-client-linux.tgz => openshift-client-linux-4.3.0-0.nightly-2019-12-06-161135.tar.gz
-        ln -sfn "$f" "${BASH_REMATCH[1]}${BASH_REMATCH[2]}.${BASH_REMATCH[4]}"
-    fi
-done
-    ''')
+//     # example file names:
+//     #  - openshift-client-linux-4.3.0-0.nightly-2019-12-06-161135.tar.gz
+//     #  - openshift-client-mac-4.3.0-0.nightly-2019-12-06-161135.tar.gz
+//     #  - openshift-install-mac-4.3.0-0.nightly-2019-12-06-161135.tar.gz
+//     #  - openshift-client-linux-4.1.9.tar.gz
+//     #  - openshift-install-mac-4.3.0-0.nightly-s390x-2020-01-06-081137.tar.gz
+//     #  ...
+//     # So, match, and store in a group, any character up to the point we find -DIGIT. Ignore everything else
+//     # until we match (and store in a group) one of the valid file extensions.
+//     if [[ "$f" =~ ^([^-]+)((-[^0-9][^-]+)+)-[0-9].*(tar.gz|tgz|bz|zip)$ ]]; then
+//         # Create a symlink like openshift-client-linux.tgz => openshift-client-linux-4.3.0-0.nightly-2019-12-06-161135.tar.gz
+//         ln -sfn "$f" "${BASH_REMATCH[1]}${BASH_REMATCH[2]}.${BASH_REMATCH[4]}"
+//     fi
+// done
+//     ''')
 
-    if ( minor > 0 ) {
-        try {
-            // To encourage customers to explore dev-previews & pre-GA releases, populate changelog
-            // https://issues.redhat.com/browse/ART-3040
-            prevMinor = minor - 1
-            rcURL = commonlib.getReleaseControllerURL(release_name)
-            rcArch = commonlib.getReleaseControllerArch(release_name)
-            stableStream = (rcArch=="amd64")?"4-stable":"4-stable-${rcArch}"
-            outputDest = "${CLIENT_MIRROR_DIR}/changelog.html"
-            outputDestMd = "${CLIENT_MIRROR_DIR}/changelog.md"
+//     if ( minor > 0 ) {
+//         try {
+//             // To encourage customers to explore dev-previews & pre-GA releases, populate changelog
+//             // https://issues.redhat.com/browse/ART-3040
+//             prevMinor = minor - 1
+//             rcURL = commonlib.getReleaseControllerURL(release_name)
+//             rcArch = commonlib.getReleaseControllerArch(release_name)
+//             stableStream = (rcArch=="amd64")?"4-stable":"4-stable-${rcArch}"
+//             outputDest = "${CLIENT_MIRROR_DIR}/changelog.html"
+//             outputDestMd = "${CLIENT_MIRROR_DIR}/changelog.md"
 
-            // If the previous minor is not yet GA, look for the latest fc/rc/ec. If the previous minor is GA, this should
-            // always return 4.m.0.
-            prevGA = commonlib.shell(returnStdout: true, script:"curl -s -X GET -G https://amd64.ocp.releases.ci.openshift.org/api/v1/releasestream/4-stable/latest --data-urlencode 'in=>4.${prevMinor}.0-0 <4.${prevMinor}.1' | jq -r .name").trim()
+//             // If the previous minor is not yet GA, look for the latest fc/rc/ec. If the previous minor is GA, this should
+//             // always return 4.m.0.
+//             prevGA = commonlib.shell(returnStdout: true, script:"curl -s -X GET -G https://amd64.ocp.releases.ci.openshift.org/api/v1/releasestream/4-stable/latest --data-urlencode 'in=>4.${prevMinor}.0-0 <4.${prevMinor}.1' | jq -r .name").trim()
 
-            // See if the previous minor has GA'd yet; e.g. https://amd64.ocp.releases.ci.openshift.org/releasestream/4-stable/release/4.8.0
-            def check = httpRequest(
-                url: "${rcURL}/releasestream/${stableStream}/release/${prevGA}",
-                httpMode: 'GET',
-                validResponseCodes: '200,404',  // if we get 404, do not compute changelog yet; prev has not GA'd.
-                timeout: 30,
-            )
-            if (check.status == 200) {
-                // If prevGA is known to the release controller, compute the changelog html
-                def response = httpRequest(
-                    url: "${rcURL}/changelog?from=${prevGA}&to=${release_name}&format=html",
-                    httpMode: 'GET',
-                    timeout: 180,
-                )
-                writeFile(file: outputDest, text: response.content)
+//             // See if the previous minor has GA'd yet; e.g. https://amd64.ocp.releases.ci.openshift.org/releasestream/4-stable/release/4.8.0
+//             def check = httpRequest(
+//                 url: "${rcURL}/releasestream/${stableStream}/release/${prevGA}",
+//                 httpMode: 'GET',
+//                 validResponseCodes: '200,404',  // if we get 404, do not compute changelog yet; prev has not GA'd.
+//                 timeout: 30,
+//             )
+//             if (check.status == 200) {
+//                 // If prevGA is known to the release controller, compute the changelog html
+//                 def response = httpRequest(
+//                     url: "${rcURL}/changelog?from=${prevGA}&to=${release_name}&format=html",
+//                     httpMode: 'GET',
+//                     timeout: 180,
+//                 )
+//                 writeFile(file: outputDest, text: response.content)
 
-                // Also collect the output in markdown for SD to consume
-                response = httpRequest(
-                    url: "${rcURL}/changelog?from=${prevGA}&to=${release_name}",
-                    httpMode: 'GET',
-                    timeout: 180,
-                )
-                writeFile(file: outputDestMd, text: response.content)
-            } else {
-                writeFile(file: outputDest, text: "<html><body><p>Changelog information cannot be computed for this release. Changelog information will be populated for new releases once ${prevGA} is officially released.</p></body></html>")
-                writeFile(file: outputDestMd, text: "Changelog information cannot be computed for this release. Changelog information will be populated for new releases once ${prevGA} is officially released.")
-            }
-        } catch (clex) {
-            slacklib.to(release_name).failure("Error generating changelog for release", clex)
-        }
-    }
+//                 // Also collect the output in markdown for SD to consume
+//                 response = httpRequest(
+//                     url: "${rcURL}/changelog?from=${prevGA}&to=${release_name}",
+//                     httpMode: 'GET',
+//                     timeout: 180,
+//                 )
+//                 writeFile(file: outputDestMd, text: response.content)
+//             } else {
+//                 writeFile(file: outputDest, text: "<html><body><p>Changelog information cannot be computed for this release. Changelog information will be populated for new releases once ${prevGA} is officially released.</p></body></html>")
+//                 writeFile(file: outputDestMd, text: "Changelog information cannot be computed for this release. Changelog information will be populated for new releases once ${prevGA} is officially released.")
+//             }
+//         } catch (clex) {
+//             slacklib.to(release_name).failure("Error generating changelog for release", clex)
+//         }
+//     }
 
-    withEnv(["OUTDIR=$CLIENT_MIRROR_DIR", "PULL_SPEC=${quay_url}:${from_release_tag}", "ARCH=$arch", "VERSION=$release_name"]){
-        commonlib.shell('''
-function extract_opm() {
-    OUTDIR=$1
-    mkdir -p "${OUTDIR}"
-    until OPERATOR_REGISTRY=$(oc adm release info --image-for operator-registry "$PULL_SPEC"); do sleep 10; done
-    # extract opm binaries
-    BINARIES=(opm)
-    PLATFORMS=(linux)
-    if [ "$ARCH" == "x86_64" ]; then  # For x86_64, we have binaries for macOS and Windows
-        BINARIES+=(darwin-amd64-opm windows-amd64-opm)
-        PLATFORMS+=(mac windows)
-    fi
+//     withEnv(["OUTDIR=$CLIENT_MIRROR_DIR", "PULL_SPEC=${quay_url}:${from_release_tag}", "ARCH=$arch", "VERSION=$release_name"]){
+//         commonlib.shell('''
+// function extract_opm() {
+//     OUTDIR=$1
+//     mkdir -p "${OUTDIR}"
+//     until OPERATOR_REGISTRY=$(oc adm release info --image-for operator-registry "$PULL_SPEC"); do sleep 10; done
+//     # extract opm binaries
+//     BINARIES=(opm)
+//     PLATFORMS=(linux)
+//     if [ "$ARCH" == "x86_64" ]; then  # For x86_64, we have binaries for macOS and Windows
+//         BINARIES+=(darwin-amd64-opm windows-amd64-opm)
+//         PLATFORMS+=(mac windows)
+//     fi
 
-    MAJOR=$(echo "$VERSION" | cut -d . -f 1)
-    MINOR=$(echo "$VERSION" | cut -d . -f 2)
+//     MAJOR=$(echo "$VERSION" | cut -d . -f 1)
+//     MINOR=$(echo "$VERSION" | cut -d . -f 2)
 
-    PATH_ARGS=()
-    for binary in ${BINARIES[@]}; do
-        PATH_ARGS+=(--path "/usr/bin/registry/$binary:$OUTDIR")
-    done
+//     PATH_ARGS=()
+//     for binary in ${BINARIES[@]}; do
+//         PATH_ARGS+=(--path "/usr/bin/registry/$binary:$OUTDIR")
+//     done
 
-    GOTRACEBACK=all oc -v4 image extract --confirm --only-files "${PATH_ARGS[@]}" -- "$OPERATOR_REGISTRY"
+//     GOTRACEBACK=all oc -v4 image extract --confirm --only-files "${PATH_ARGS[@]}" -- "$OPERATOR_REGISTRY"
 
-    # Compress binaries into tar.gz files and calculate sha256 digests
-    pushd "$OUTDIR"
-    for idx in ${!BINARIES[@]}; do
-        binary=${BINARIES[idx]}
-        platform=${PLATFORMS[idx]}
-        chmod +x "$binary"
-        tar -czvf "opm-$platform-$VERSION.tar.gz" "$binary"
-        rm "$binary"
-        ln -sf "opm-$platform-$VERSION.tar.gz" "opm-$platform.tar.gz"
-        sha256sum "opm-$platform-$VERSION.tar.gz" >> sha256sum.txt
-    done
-    popd
-}
-extract_opm "$OUTDIR"
-        ''')
-    }
+//     # Compress binaries into tar.gz files and calculate sha256 digests
+//     pushd "$OUTDIR"
+//     for idx in ${!BINARIES[@]}; do
+//         binary=${BINARIES[idx]}
+//         platform=${PLATFORMS[idx]}
+//         chmod +x "$binary"
+//         tar -czvf "opm-$platform-$VERSION.tar.gz" "$binary"
+//         rm "$binary"
+//         ln -sf "opm-$platform-$VERSION.tar.gz" "opm-$platform.tar.gz"
+//         sha256sum "opm-$platform-$VERSION.tar.gz" >> sha256sum.txt
+//     done
+//     popd
+// }
+// extract_opm "$OUTDIR"
+//         ''')
+//     }
 
-    sh "tree $CLIENT_MIRROR_DIR"
-    sh "cat $CLIENT_MIRROR_DIR/sha256sum.txt"
+//     sh "tree $CLIENT_MIRROR_DIR"
+//     sh "cat $CLIENT_MIRROR_DIR/sha256sum.txt"
 
-    mirror_cmd = "aws s3 sync --no-progress --exact-timestamps ${BASE_TO_MIRROR_DIR}/ s3://art-srv-enterprise/pub/openshift-v4/"
-    if ( ! params.DRY_RUN ) {
-        // Publish the clients to our S3 bucket.
-        try {
-            withCredentials([aws(credentialsId: 's3-art-srv-enterprise', accessKeyVariable: 'AWS_ACCESS_KEY_ID', secretKeyVariable: 'AWS_SECRET_ACCESS_KEY')]) {
-                commonlib.shell(script: mirror_cmd)
-            }
-        } catch (ex) {
-            slacklib.to("#art-release").say("Failed syncing OCP clients to S3 in ${currentBuild.displayName} (${env.JOB_URL})")
-        }
+//     mirror_cmd = "aws s3 sync --no-progress --exact-timestamps ${BASE_TO_MIRROR_DIR}/ s3://art-srv-enterprise/pub/openshift-v4/"
+//     if ( ! params.DRY_RUN ) {
+//         // Publish the clients to our S3 bucket.
+//         try {
+//             withCredentials([aws(credentialsId: 's3-art-srv-enterprise', accessKeyVariable: 'AWS_ACCESS_KEY_ID', secretKeyVariable: 'AWS_SECRET_ACCESS_KEY')]) {
+//                 commonlib.shell(script: mirror_cmd)
+//             }
+//         } catch (ex) {
+//             slacklib.to("#art-release").say("Failed syncing OCP clients to S3 in ${currentBuild.displayName} (${env.JOB_URL})")
+//         }
 
-    } else {
-        echo "Not mirroring; would have run: ${mirror_cmd}"
-    }
+//     } else {
+//         echo "Not mirroring; would have run: ${mirror_cmd}"
+//     }
 
-}
+// }
 
 /**
  * Derive an architecture name and private flag from a release registry repo tag.

@@ -2,8 +2,34 @@ import base64
 import logging
 import os
 import aiohttp
+from jenkinsapi.jenkins import Jenkins
+
+import constants
 
 logger = logging.getLogger(__name__)
+
+
+def _get_credentials():
+    """
+    Get username and password from environment variables.
+    :return: tuple containing username and password
+    """
+    service_account = os.environ['JENKINS_SERVICE_ACCOUNT']
+    token = os.environ['JENKINS_SERVICE_ACCOUNT_TOKEN']
+    if not username or not password:
+        raise RuntimeError('Jenkins account and token must be set in environment variables')
+    return service_account, token
+
+
+class JenkinsApi:
+    def __init__(self):
+        service_account, token = _get_credentials()
+        self.J = Jenkins(constants.BUILDVM_URL, username=service_account, password=token)
+
+    def trigger_job(self, job_path: str, params: dict = {}):
+        job = self.J.get_job(job_path)
+        b = job.invoke(build_params=params).block_until_building()
+        b.block_until_complete()
 
 
 async def trigger_jenkins_job(job_path: str, params: dict = {}):
@@ -13,8 +39,7 @@ async def trigger_jenkins_job(job_path: str, params: dict = {}):
     :param params: optional dict containing job parameters
     """
 
-    service_account = os.environ['JENKINS_SERVICE_ACCOUNT']
-    token = os.environ['JENKINS_SERVICE_ACCOUNT_TOKEN']
+    service_account, token = _get_credentials()
 
     build_url = os.environ.get('BUILD_URL', '')
     if build_url:
@@ -28,7 +53,7 @@ async def trigger_jenkins_job(job_path: str, params: dict = {}):
     # Build url
     # If the job to be triggered is parametrized, use 'buildWithParameters' and send HTTP data
     # Otherwise, just call the 'build' endpoint with empty data
-    url = f'https://buildvm.hosts.prod.psi.bos.redhat.com:8443/{job_path}'
+    url = f'{constants.BUILDVM_URL}/{job_path}'
     if params:
         url += '/buildWithParameters'
     else:

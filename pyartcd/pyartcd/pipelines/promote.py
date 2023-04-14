@@ -87,7 +87,7 @@ class PromotePipeline:
         group_config = await util.load_group_config(self.group, self.assembly, env=self._doozer_env_vars)
         releases_config = await util.load_releases_config(self._doozer_working_dir / "ocp-build-data")
         if releases_config.get("releases", {}).get(self.assembly) is None:
-            raise ValueError(f"To promote this release, assembly {self.assembly} must be explictly defined in releases.yml.")
+            raise ValueError(f"To promote this release, assembly {self.assembly} must be explicitly defined in releases.yml.")
         permits = util.get_assembly_promotion_permits(releases_config, self.assembly)
 
         # Get release name

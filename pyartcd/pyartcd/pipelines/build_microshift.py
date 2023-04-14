@@ -10,6 +10,7 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 from typing import Dict, Iterable, List, Optional, Tuple, cast
 
+
 import click
 from doozerlib.assembly import AssemblyTypes
 from doozerlib.util import (brew_arch_for_go_arch,
@@ -79,7 +80,7 @@ class BuildMicroShiftPipeline:
                 # rebase against nightlies
                 # rpm version-release will be like `4.12.0~test-202201010000.p?`
                 if self.no_rebase:
-                    # Without knowning the nightly name, it is hard to determine rpm version-release.
+                    # Without knowing the nightly name, it is hard to determine rpm version-release.
                     raise ValueError("--no-rebase is not supported to build against assembly stream.")
                 if not self.payloads:
                     raise ValueError("Release payloads must be specified to rebase against assembly stream.")

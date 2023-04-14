@@ -19,3 +19,4 @@ NIGHTLY_PAYLOAD_REPOS = {
 }
 
 OCP_BUILD_DATA_URL = 'https://github.com/openshift-eng/ocp-build-data'
+BUILDVM_URL = "https://buildvm.hosts.prod.psi.bos.redhat.com:8443"

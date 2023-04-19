@@ -96,9 +96,9 @@ class BuildRhcosPipeline:
                 r2 = self.request_session.get(
                     f"{JENKINS_BASE_URL}/job/build/api/json?tree=builds[number,description,result,actions[parameters[name,value]]]"
                 )
+                print(s.name())
                 print(r.status_code, r.headers['content-type'], r.encoding, file=sys.stderr)
                 print(r2.status_code, r2.headers['content-type'], r2.encoding, file=sys.stderr)
-                break
         
         exit(0)
 

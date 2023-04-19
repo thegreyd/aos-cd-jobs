@@ -90,7 +90,7 @@ class BuildRhcosPipeline:
         for s in oc.selector('secrets'):
             if s.model.type == "kubernetes.io/service-account-token" and s.model.metadata.annotations["kubernetes.io/service-account.name"] == "jenkins":
             # and s.model.metadata.annotations["kubernetes.io/service-account.uid"] == jenkins_uid:
-                secret = base64.b64decode(secret.model.data.token).decode('utf-8')
+                secret = base64.b64decode(s.model.data.token).decode('utf-8')
                 self.request_session.headers.update({"Authorization": f"Bearer {secret}"})
                 r = self.request_session.get(
                     f"{JENKINS_BASE_URL}/me/api/json",

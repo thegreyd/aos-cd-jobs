@@ -84,26 +84,23 @@ class BuildRhcosPipeline:
 
     def retrieve_auth_token(self) -> str:
         """Retrieve the auth token from the Jenkins service account to use with Jenkins API"""
-        # use the first secret named after the jenkins service account (there can be several)
-        # secret = next((s for s in oc.selector('secrets') if s.name().startswith('jenkins-token-')), None)
+        # https://github.com/coreos/fedora-coreos-pipeline/blob/main/HACKING.md#triggering-builds-remotely
+        
+        secret = None
+        jenkins_uid = oc.selector('sa/jenkins').objects()[0].model.metadata.uid
         for s in oc.selector('secrets'):
-            if s.model.type == "kubernetes.io/service-account-token" and s.model.metadata.annotations["kubernetes.io/service-account.name"] == "jenkins":
-                secret = base64.b64decode(s.model.data.token).decode('utf-8')
-                self.request_session.headers.update({"Authorization": f"Bearer {secret}"})
+            if s.model.type == "kubernetes.io/service-account-token" and s.model.metadata.annotations["kubernetes.io/service-account.name"] == "jenkins" and s.model.metadata.annotations["kubernetes.io/service-account.uid"] == jenkins_uid:
+                secret_maybe = base64.b64decode(s.model.data.token).decode('utf-8')
                 r = self.request_session.get(
                     f"{JENKINS_BASE_URL}/me/api/json",
+                    headers={"Authorization": f"Bearer {secret_maybe}"},
                 )
-                r2 = self.request_session.get(
-                    f"{JENKINS_BASE_URL}/job/build/api/json?tree=builds[number,description,result,actions[parameters[name,value]]]"
-                )
-                print(s.name())
-                print(r.status_code, r.headers['content-type'], r.encoding, file=sys.stderr)
-                print(r2.status_code, r2.headers['content-type'], r2.encoding, file=sys.stderr)
-        
-        exit(0)
-
+                if r.status_code == 200:
+                    secret = secret_maybe
+                    break
+                
         if secret is None:
-            raise Exception("Unable to find Jenkins service account token")
+            raise Exception("Unable to find a valid Jenkins service account token")
 
         return base64.b64decode(secret.model.data.token).decode('utf-8')
 

@@ -86,9 +86,10 @@ class BuildRhcosPipeline:
         """Retrieve the auth token from the Jenkins service account to use with Jenkins API"""
         # https://github.com/coreos/fedora-coreos-pipeline/blob/main/HACKING.md#triggering-builds-remotely
 
-        jenkins_uid = oc.selector('sa/jenkins').objects()[0].model.metadata.uid
+        #jenkins_uid = oc.selector('sa/jenkins').objects()[0].model.metadata.uid
         for s in oc.selector('secrets'):
-            if s.model.type == "kubernetes.io/service-account-token" and s.model.metadata.annotations["kubernetes.io/service-account.name"] == "jenkins" and s.model.metadata.annotations["kubernetes.io/service-account.uid"] == jenkins_uid:
+            if s.model.type == "kubernetes.io/service-account-token" and s.model.metadata.annotations["kubernetes.io/service-account.name"] == "jenkins":
+            # and s.model.metadata.annotations["kubernetes.io/service-account.uid"] == jenkins_uid:
                 secret = s
                 r = self.request_session.get(
                     f"{JENKINS_BASE_URL}/me/api/json",

@@ -102,7 +102,7 @@ class BuildRhcosPipeline:
         if secret is None:
             raise Exception("Unable to find a valid Jenkins service account token")
 
-        return base64.b64decode(secret.model.data.token).decode('utf-8')
+        return secret
 
     @staticmethod
     def build_parameters(build: Dict[str, List[Dict]]) -> Dict:

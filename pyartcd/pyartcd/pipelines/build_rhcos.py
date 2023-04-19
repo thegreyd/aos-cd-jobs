@@ -84,8 +84,19 @@ class BuildRhcosPipeline:
 
     def retrieve_auth_token(self) -> str:
         """Retrieve the auth token from the Jenkins service account to use with Jenkins API"""
-        # use the first secret named after the jenkins service account (there can be several)
-        secret = next((s for s in oc.selector('secrets') if s.name().startswith('jenkins-token-')), None)
+        # https://github.com/coreos/fedora-coreos-pipeline/blob/main/HACKING.md#triggering-builds-remotely
+
+        jenkins_uid = oc.selector('sa/jenkins').objects()[0].model.metadata.uid
+        for s in oc.selector('secrets'):
+            if s.model.type == "kubernetes.io/service-account-token" and s.model.metadata.annotations["kubernetes.io/service-account.name"] == "jenkins" and s.model.metadata.annotations["kubernetes.io/service-account.uid"] == jenkins_uid:
+                secret = s
+                r = self.request_session.get(
+                    f"{JENKINS_BASE_URL}/me/api/json",
+                )
+                print(r.status_code, r.headers['content-type'], r.encoding, file=sys.stderr)
+
+        exit(0)
+
         if secret is None:
             raise Exception("Unable to find Jenkins service account token")
 

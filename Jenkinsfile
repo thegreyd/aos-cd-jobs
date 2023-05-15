@@ -102,6 +102,9 @@ node {
 
         dest_version = "${(kind in prefixes) ? prefixes[kind] : ""}${params.VERSION}"
         local_dest_dir = "${env.WORKSPACE}/${dest_version}"
+        if (params.LOCATION.startsWith("rcm-guest")) {
+            base_path = "/mnt"
+        }
         source_path = "${base_path}/${params.LOCATION}"
         latest_dir = "${env.WORKSPACE}/latest/"
         
@@ -136,7 +139,7 @@ node {
                 """
                 set -euxo pipefail
                 mkdir -p ${local_dest_dir}
-                rsync -rlp --info=progress2 exd-ocp-buildvm-bot-prod@spmm-util:${params.LOCATION} ${local_dest_dir}
+                rsync -rlp --info=progress2 exd-ocp-buildvm-bot-prod@spmm-util:${source_path} ${local_dest_dir}
                 """
             )
         } else {

@@ -102,9 +102,6 @@ node {
 
         dest_version = "${(kind in prefixes) ? prefixes[kind] : ""}${params.VERSION}"
         local_dest_dir = "${env.WORKSPACE}/${dest_version}"
-        if (params.LOCATION.startsWith("rcm-guest")) {
-            base_path = "/mnt"
-        }
         source_path = "${base_path}/${params.LOCATION}"
         latest_dir = "${env.WORKSPACE}/latest/"
         
@@ -133,17 +130,28 @@ node {
     }
 
     stage("Sync to mirror") {
-        // Copy NFS dir to local tmp dir
-        commonlib.shell(
-            script:
-            """
-            set -euxo pipefail
-            cp -aL ${source_path} ${local_dest_dir}
-            if [ -e ${local_dest_dir}/sha256sum.txt ]; then
-                cat ${local_dest_dir}/sha256sum.txt
-            fi
-            """
-        )
+        if (params.LOCATION.startsWith("rcm-guest")) {
+            commonlib.shell(
+                script:
+                """
+                set -euxo pipefail
+                mkdir -p ${local_dest_dir}
+                rsync -rlp --info=progress2 exd-ocp-buildvm-bot-prod@spmm-util:${params.LOCATION} ${local_dest_dir}
+                """
+            )
+        } else {
+            // Copy NFS dir to local tmp dir
+            commonlib.shell(
+                script:
+                """
+                set -euxo pipefail
+                cp -aL ${source_path} ${local_dest_dir}
+                if [ -e ${local_dest_dir}/sha256sum.txt ]; then
+                    cat ${local_dest_dir}/sha256sum.txt
+                fi
+                """
+            )
+        }
 
         // Remove undesired arch from source dir
         if (params.SKIP_ARCH != "none") {

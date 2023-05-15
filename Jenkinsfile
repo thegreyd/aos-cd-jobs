@@ -102,9 +102,6 @@ node {
 
         dest_version = "${(kind in prefixes) ? prefixes[kind] : ""}${params.VERSION}"
         local_dest_dir = "${env.WORKSPACE}/${dest_version}"
-        if (params.LOCATION.startsWith("rcm-guest")) {
-            base_path = "/mnt"
-        }
         source_path = "${base_path}/${params.LOCATION}"
         latest_dir = "${env.WORKSPACE}/latest/"
         
@@ -134,6 +131,7 @@ node {
 
     stage("Sync to mirror") {
         if (params.LOCATION.startsWith("rcm-guest")) {
+            source_path = params.LOCATION.substring(10)
             commonlib.shell(
                 script:
                 """

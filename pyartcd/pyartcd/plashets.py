@@ -258,7 +258,7 @@ async def copy_to_remote(local_base_dir: os.PathLike, remote_base_dir: os.PathLi
     """
 
     # Make sure the remote base dir exist
-    local_base_dir = Path(local_base_dir)
+    local_base_dir = Path(f'/mnt/workspace/jenkins/working/aos-cd-builds/build%2Focp4/{local_base_dir}')
     remote_base_dir = Path(remote_base_dir)
     cmd = [
         "ssh",

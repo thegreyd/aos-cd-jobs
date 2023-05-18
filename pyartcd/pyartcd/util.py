@@ -12,7 +12,6 @@ from doozerlib import assembly, model, util as doozerutil
 from errata_tool import ErrataConnector
 
 from pyartcd import exectools, constants, jenkins
-from pyartcd.runtime import Runtime
 
 logger = logging.getLogger(__name__)
 
@@ -284,7 +283,7 @@ async def sync_images(version: str, assembly: str, operator_nvrs: list,
     if assembly == 'test':
         logger.warning('Skipping build-sync job for test assembly')
     else:
-        jenkins_client.start_build_sync(
+        jenkins.start_build_sync(
             build_version=version,
             assembly=assembly,
             doozer_data_path=doozer_data_path,
@@ -292,7 +291,7 @@ async def sync_images(version: str, assembly: str, operator_nvrs: list,
         )
 
     if operator_nvrs:
-        jenkins_client.start_olm_bundle(
+        jenkins.start_olm_bundle(
             build_version=version,
             assembly=assembly,
             operator_nvrs=operator_nvrs,

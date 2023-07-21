@@ -117,7 +117,6 @@ node {
                         lock("github-activity-lock-${params.BUILD_VERSION}")
                     }
                     withEnv([
-                        "BUILD_USER_EMAIL=${builderEmail?: ''}",
                         "BUILD_URL=${BUILD_URL}",
                         "JOB_NAME=${JOB_NAME}",
                         'DOOZER_DB_NAME=art_dash'

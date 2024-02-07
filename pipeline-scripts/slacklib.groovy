@@ -126,7 +126,11 @@ def notifySlack(channel, as_user, text, attachments=[], thread_ts=null, replyBro
         }
 
          //print "Received slack response: ${response}\n\n"
-         return readJSON(text: response.content)
+        def responseJson = readJSON(text: response.content)
+        if (!responseJson.ok) {
+            error("slack response not ok:\n ${response.content}\n")
+        }
+        return responseJson
     }
 }
 
@@ -205,7 +209,6 @@ class SlackOutputter {
 
         if ( this.channel ) {
             def responseJson = script.notifySlack(this.channel, as_user, msg, attachments, this.thread_ts, replyBroadcast, this.verbose)
-            echo responseJson
             if ( ! new_thread_ts ) {
                 new_thread_ts = responseJson.message.ts
             }

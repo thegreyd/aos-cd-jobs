@@ -205,6 +205,7 @@ class SlackOutputter {
 
         if ( this.channel ) {
             def responseJson = script.notifySlack(this.channel, as_user, msg, attachments, this.thread_ts, replyBroadcast, this.verbose)
+            echo responseJson
             if ( ! new_thread_ts ) {
                 new_thread_ts = responseJson.message.ts
             }

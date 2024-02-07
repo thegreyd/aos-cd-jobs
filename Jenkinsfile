@@ -72,7 +72,7 @@ node() {
                     }
                 }
             } catch (exception) {
-                releaseChannel.say(":alert: Failed checking for alignment PRs:\n${BUILD_URL}")
+                // releaseChannel.say(":alert: Failed checking for alignment PRs:\n${BUILD_URL}")
                 currentBuild.result = "FAILURE"
                 throw exception  // gets us a stack trace FWIW
             }

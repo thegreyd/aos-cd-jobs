@@ -94,7 +94,7 @@ node {
         }
         echo "Setting SKIP_PRS to true because ONLY_STREAM is set"
         params.SKIP_PRS = true
-        def streamParam = "--stream ${params.ONLY_STREAM}"
+        streamParam = "--stream ${params.ONLY_STREAM}"
     }
 
     buildlib.withAppCiAsArtPublish() {

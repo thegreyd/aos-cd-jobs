@@ -1,122 +1,203 @@
-#!/usr/bin/env groovy
+// Monitor all branches of ocp-build-data
+
+@NonCPS
+def sortedVersions() {
+    return commonlib.ocp4Versions.sort(false)
+}
 
 node {
     checkout scm
     def buildlib = load("pipeline-scripts/buildlib.groovy")
     def commonlib = buildlib.commonlib
-    commonlib.describeJob("golang-builder", """
-        <h2>Build golang-builder images</h2>
-        <b>Timing</b>: This is only ever run by humans, as needed. No job should be calling it.
-    """)
 
-    // Expose properties for a parameterized build
-    properties(
+    properties([
+        disableConcurrentBuilds(),
+        disableResume(),
+        buildDiscarder(
+            logRotator(
+                artifactDaysToKeepStr: '20',
+                daysToKeepStr: '20'
+            )
+        ),
         [
-            disableResume(),
-            [
-                $class: 'ParametersDefinitionProperty',
-                parameterDefinitions: [
-                    commonlib.dryrunParam(),
-                    commonlib.mockParam(),
-                    commonlib.artToolsParam(),
-                    string(
-                        name: 'DOOZER_DATA_PATH',
-                        description: 'ocp-build-data fork to use (e.g. test customizations on your own fork)',
-                        defaultValue: "https://github.com/openshift-eng/ocp-build-data",
-                        trim: true,
-                    ),
-                    string(
-                        name: 'GOLANG_VERSION',
-                        description: 'Golang version (e.g. 1.16.12)',
-                        trim: true,
-                    ),
-                    string(
-                        name: 'RELEASE',
-                        description: '(Optional) Release string for build instead of default (timestamp.el8 or timestamp.el7)',
-                        trim: true,
-                    ),
-                    booleanParam(
-                        name: 'SCRATCH',
-                        description: 'Perform a scratch build (will not use an NVR or update tags)',
-                    ),
-                    choice(
-                        name: 'RHEL_VERSION',
-                        description: 'for which RHEL version (7/8/9)',
-                        choices: ['9', '8', '7'].join('\n'),
-                    ),
-                    commonlib.suppressEmailParam(),
-                    string(
-                        name: 'MAIL_LIST_SUCCESS',
-                        description: '(Optional) Success Mailing List',
-                        defaultValue: "",
-                        trim: true,
-                    ),
-                    string(
-                        name: 'MAIL_LIST_FAILURE',
-                        description: 'Failure Mailing List',
-                        defaultValue: [
-                            'aos-art-automation+failed-custom-build@redhat.com',
-                        ].join(','),
-                        trim: true,
-                    ),
-                ]
+            $class: 'ParametersDefinitionProperty',
+            parameterDefinitions: [
+                string(
+                    name: "ONLY_RELEASE",
+                    description: "Only run for one version; e.g. 4.7",
+                    defaultValue: "",
+                    trim: true,
+                ),
+                string(
+                    name: 'ONLY_STREAM',
+                    description: 'The name of the stream (not `assembly=stream` but `stream=golang`) from streams.yml that you want to run for. This only works with ONLY_RELEASE, and SKIP_PRS will be set to true.',
+                    defaultValue: "",
+                    trim: true,
+                ),
+                string(
+                    name: "ADD_LABELS",
+                    description: "Space delimited list of labels to add to existing/new PRs",
+                    defaultValue: "",
+                    trim: true,
+                ),
+                string(
+                    name: 'ASSEMBLY',
+                    description: 'The name of an assembly to rebase & build for. If assemblies are not enabled in group.yml, this parameter will be ignored',
+                    defaultValue: "stream",
+                    trim: true,
+                ),
+                [
+                    name: 'SKIP_PRS',
+                    description: 'Skip opening PRs, do everything else',
+                    $class: 'BooleanParameterDefinition',
+                    defaultValue: false
+                ],
+                [
+                    name: 'SKIP_WAITS',
+                    description: 'Skip sleeps',
+                    $class: 'BooleanParameterDefinition',
+                    defaultValue: false
+                ],
+                [
+                    name: 'FORCE_RUN',
+                    description: 'Run even if ocp-build-data appears unchanged',
+                    $class: 'BooleanParameterDefinition',
+                    defaultValue: false
+                ],
+                [
+                    name: 'UPDATE_IMAGES_ONLY_WHEN_MISSING',
+                    description: 'By default, if an image exists, this job does not update it (i.e. doozer runs with --only-if-missing). It would normally be updated by the ocp4 job when the API server successfully builds.',
+                    $class: 'BooleanParameterDefinition',
+                    defaultValue: true
+                ],
+                commonlib.artToolsParam(),
+                commonlib.dryrunParam(),
+                commonlib.mockParam(),
             ],
         ]
-    )
+    ])
 
-    commonlib.checkMock()
-
-    stage('set build info') {
-        script {
-            if (!(params.GOLANG_VERSION ==~ /\d+\.\d+\.\d+/))
-                error("Invalid Golang version ${params.GOLANG_VERSION}")
-            env._GOLANG_MAJOR_MINOR = commonlib.extractMajorMinorVersion(params.GOLANG_VERSION)
-            def group = params.RHEL_VERSION == "7" ? "golang-${env._GOLANG_MAJOR_MINOR}" : "rhel-${params.RHEL_VERSION}-golang-${env._GOLANG_MAJOR_MINOR}"
-            env._DOOZER_OPTS = "--data-path ${params.DOOZER_DATA_PATH} --working-dir ${WORKSPACE}/doozer_working --group $group"
-            currentBuild.displayName = "${params.GOLANG_VERSION}"
-        }
+    if (params.ONLY_RELEASE) {
+        for_versions = [ONLY_RELEASE]
+    } else {
+        for_versions = sortedVersions()
     }
 
-    stage('build') {
-        withCredentials([string(credentialsId: 'gitlab-ocp-release-schedule-schedule', variable: 'GITLAB_TOKEN')]) {
-            withCredentials([
-                string(credentialsId: 'art-bot-slack-token', variable: 'SLACK_BOT_TOKEN'),
-                string(credentialsId: 'redis-server-password', variable: 'REDIS_SERVER_PASSWORD'),
-                string(credentialsId: 'redis-host', variable: 'REDIS_HOST'),
-                string(credentialsId: 'redis-port', variable: 'REDIS_PORT'),
-                string(credentialsId: 'openshift-bot-token', variable: 'GITHUB_TOKEN')
-            ]) {
-                script {
-                    lock("golang-builder-lock-${env._GOLANG_MAJOR_MINOR}-el${params.RHEL_VERSION}") {
-                        echo "Rebasing..."
-                        def opts = "${env._DOOZER_OPTS} images:rebase --version v${params.GOLANG_VERSION}"
-                        release = params.RELEASE ?: "${new Date().format("yyyyMMddHHmm")}"
-                        currentBuild.displayName += "${release} - el${params.RHEL_VERSION}"
-                        opts += " --release ${release}  -m 'bumping to ${params.GOLANG_VERSION}-${release}'"
-                        if (!params.DRY_RUN)
-                            opts += " --push"
-                        buildlib.doozer(opts)
+    if (params.FORCE_RUN) {
+        currentBuild.displayName += " (forced)"
+    }
 
-                        echo "Building..."
-                        opts = "${env._DOOZER_OPTS} images:build --repo-type unsigned --push-to-defaults"
-                        if (params.DRY_RUN)
-                            opts += " --dry-run"
-                        if (params.SCRATCH)
-                            opts += " --scratch"
-                        buildlib.doozer(opts)
+    def streamParam = ""
+    if (params.ONLY_STREAM) {
+        if (!params.ONLY_RELEASE) {
+            error("ONLY_STREAM can only be used with ONLY_RELEASE")
+        }
+        echo "Setting SKIP_PRS to true because ONLY_STREAM is set"
+        params.SKIP_PRS = true
+        def streamParam = "--stream ${params.ONLY_STREAM}"
+    }
 
-                        commonlib.safeArchiveArtifacts([
-                            "doozer_working/*.log",
-                            "doozer_working/*.yaml",
-                            "doozer_working/brew-logs/**",
-                        ])
+    buildlib.withAppCiAsArtPublish() {
+        sh "oc registry login"
+
+        for ( String version : for_versions ) {
+            group = "openshift-${version}"
+            echo "Checking group: ${group}"
+            (major, minor) = commonlib.extractMajorMinorVersionNumbers(version)
+
+            sh "rm -rf ${group}"
+            sh "git clone https://github.com/openshift-eng/ocp-build-data --branch ${group} --single-branch --depth 1 ${group}"
+            dir(group) {
+                now_hash = sh(returnStdout: true, script: "git rev-parse HEAD").trim()
+            }
+
+            prev_dir_name = "${group}-prev"
+            dir(prev_dir_name) {  // if there was a previous, it should be here
+                prev_hash = sh(returnStdout: true, script: "git rev-parse HEAD || echo 0").trim()
+            }
+
+            // Ensure that the base image in ocp-private (base image for private release controller / private images)
+            // is kept in sync with public. ART automation updates the public periodically, but it needs to 
+            // also keep priv in sync.
+            sh "oc image mirror registry.ci.openshift.org/ocp/${version}:base registry.ci.openshift.org/ocp-private/${version}-priv:base"
+
+            echo "Current hash: ${now_hash} "
+            echo "Previous hash: ${prev_hash}"
+
+            if (now_hash == prev_hash && !params.FORCE_RUN) {
+                echo "NO changes detected in ocp-build-data group: ${group}"
+                continue
+            }
+
+            echo "Changes detected in ocp-build-data group: ${group}"
+            currentBuild.displayName += " ${version}"
+
+            doozerWorking = "${env.WORKSPACE}/wd-${version}"
+            def doozerOpts = "--working-dir ${doozerWorking} --group ${group} "
+
+            rc = 0
+            try {
+                sshagent(["openshift-bot"]) {
+                    sh "rm -rf ${doozerWorking}"
+                    buildlib.doozer("${doozerOpts} images:streams gen-buildconfigs ${streamParam} -o ${group}.yaml --apply")
+                    mirror_args = ""
+                    if ( params.UPDATE_IMAGES_ONLY_WHEN_MISSING ) {
+                        mirror_args += "--only-if-missing "
+                    }
+                    buildlib.doozer("${doozerOpts} images:streams mirror ${streamParam} ${mirror_args}")
+                    buildlib.doozer("${doozerOpts} images:streams start-builds ${streamParam}")
+
+                    if (!params.SKIP_WAITS) {
+                        // Allow the builds to run for about 20 minutes
+                        sleep time: 20, unit: 'MINUTES'
+                    }
+                    // Print out status of builds for posterity
+                    buildlib.doozer("${doozerOpts} images:streams check-upstream")
+
+                    // Open reconciliation PRs
+                    if (params.SKIP_PRS) {
+                        echo "Skipping opening PRs"
+                    } else {
+                        withCredentials([string(credentialsId: 'openshift-bot-token', variable: 'GITHUB_TOKEN'), string(credentialsId: 'jboss-jira-token', variable: 'JIRA_TOKEN')]) {
+                            if ( (major == 4 && minor >= 12) || major > 4 ) {
+                                other_args = '--add-label "bugzilla/valid-bug" --add-label "cherry-pick-approved" --add-label "backport-risk-assessed"'
+                                for ( label in params.ADD_LABELS.split() ) {
+                                    other_args += " --add-label '${label}'"
+                                }
+                                // Only open PRs on >= 4.6 to leave well enough alone.
+                                withEnv(["BUILD_URL=${BUILD_URL}"]) {
+                                    rc = sh script:"doozer ${doozerOpts} --assembly stream images:streams prs open --interstitial 840 --add-auto-labels ${other_args} --github-access-token ${GITHUB_TOKEN}", returnStatus: true
+                                }
+                                // rc=50 is used to indicate some errors raised during PR openings
+                                // rc=25 is used to indicate PR openings were skipped and to try again later.
+                                if ( rc != 0 && rc != 25 && rc != 50) {
+                                    error("Error opening PRs for ${group}: ${rc}")
+                                }
+                            }
+                        }
                     }
                 }
+            } finally {
+                commonlib.safeArchiveArtifacts(["wd-${version}/*.log"])
+                sh "rm -rf ${doozerWorking}"
+            }
+
+            if ( rc == 25 ) {
+                currentBuild.result = "UNSTABLE"
+                currentBuild.displayName += "-Partial"
+                echo "Some PRs were skipped because parent PRs have not merged yet: ${version}."
+                // Do not "mv ${group} ${prev_dir_name}" because we are not done
+            } else if ( rc == 50 ) {
+                currentBuild.result = "FAILURE"
+                currentBuild.displayName += "-Completed with errors"
+                echo "Some errors were raised during PR openings; please check the logs for details"
+            } else {
+                sh "rm -rf ${prev_dir_name}"
+                sh "mv ${group} ${prev_dir_name}"
             }
         }
     }
 
-    stage('Clean up') {
-        buildlib.cleanWorkspace()
-    }
+    // Do not clean blindly. We need information to persist across runs in order to detect change in ocp-build-data.
+    // buildlib.cleanWorkspace()
 }

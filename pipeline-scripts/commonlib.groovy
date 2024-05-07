@@ -32,6 +32,8 @@ def getEOLVersions(ocp_major_version='4') {
         def out = sh(script: "curl -s ${group_yml_url} | yq '.software_lifecycle'", returnStdout: true).trim()
         if (out == "phase: eol") {
             eol_versions << version
+        } else {
+            echo "Version ${version} is not EOL: out=${out}"
         }
     }
     return eol_versions
@@ -39,7 +41,9 @@ def getEOLVersions(ocp_major_version='4') {
 
 def ocp4Versions() {
     eolVersions = getEOLVersions('4')
-    return ocp4Versions.findAll { it -> !eolVersions.contains(it) }
+    echo "EOL Versions: ${eolVersions}"
+    found = ocp4Versions.findAll { it -> !eolVersions.contains(it) }
+    return found
 }
 
 // some of our systems refer to golang's chosen architecture nomenclature;

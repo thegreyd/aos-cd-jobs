@@ -30,7 +30,7 @@ def getEOLVersions(ocp_major_version='4') {
         def branch = "openshift-${version}"
         def group_yml = "https://raw.githubusercontent.com/openshift-eng/ocp-build-data/${branch}/group.yml"
         def group_yml_content = new URL(group_yml).getText()
-        def group_yml_data = new Yaml().load(group_yml_content)
+        def group_yml_data = readYaml(text: group_yml_content)
         // check if software_lifecycle key exists in group.yml
         if (!group_yml_data.containsKey('software_lifecycle')) {
             echo "software_lifecycle key not found in group.yml for ${version}"

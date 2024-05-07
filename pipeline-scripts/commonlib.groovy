@@ -37,11 +37,16 @@ def getEOLVersions(ocp_major_version='4') {
             echo "software_lifecycle key not found in group.yml for ${version}"
             continue
         }
-        if (group_yml_data['software_lifecycle'] == 'eol') {
+        if (!group_yml_data['software_lifecycle'].containsKey('phase')) {
+            echo "phase key not found in group.yml for ${version}"
+            continue
+        }
+        def val = group_yml_data['software_lifecycle']['phase']
+        if (val == 'eol') {
             echo "${version} is EOL"
             eol_versions << version
         } else {
-            echo "Version ${version} is not EOL"
+            echo "Version ${version} is not EOL ${val}"
         }
     }
     return eol_versions

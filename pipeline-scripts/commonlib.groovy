@@ -29,11 +29,19 @@ def getEOLVersions(ocp_major_version='4') {
     for (version in ocpMajorVersions[ocp_major_version]) {
         def branch = "openshift-${version}"
         def group_yml_url = "https://raw.githubusercontent.com/openshift-eng/ocp-build-data/${branch}/group.yml"
-        def out = sh(script: "curl -s ${group_yml_url} | yq '.software_lifecycle' -o yaml", returnStdout: true).trim()
-        if (out == "phase: eol") {
+        // def out = sh(script: "curl -s ${group_yml_url} | yq '.software_lifecycle' -o yaml", returnStdout: true).trim()
+        def group_yml_content = new URL(group_yml).getText()
+        def group_yml_data = readYaml(text: group_yml_content)
+        // check if software_lifecycle key exists in group.yml
+        if (!group_yml_data.containsKey('software_lifecycle')) {
+            echo "software_lifecycle key not found in group.yml for ${version}"
+            continue
+        }
+        if (group_yml_data['software_lifecycle'] == 'eol') {
+            echo "${version} is EOL"
             eol_versions << version
         } else {
-            echo "Version ${version} is not EOL: out=${out}"
+            echo "Version ${version} is not EOL"
         }
     }
     return eol_versions

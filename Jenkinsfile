@@ -83,7 +83,7 @@ timeout(activity: true, time: 60, unit: 'MINUTES') {
             }
 
             buildlib.cleanWorkdir(artcd_working, true)
-            versions = commonlib.getOCP4Versions()
+            versions = commonlib.OCP4Versions()
             echo "OCP4 Versions: ${versions}"
             exit 0
         }

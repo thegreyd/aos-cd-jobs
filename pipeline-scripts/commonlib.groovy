@@ -39,7 +39,7 @@ def getEOLVersions(ocp_major_version='4') {
 
 def ocp4Versions() {
     eolVersions = getEOLVersions('4')
-    return ocp4Versions.findAll { it !eolVersions.contains(it) }
+    return ocp4Versions.findAll { it -> !eolVersions.contains(it) }
 }
 
 // some of our systems refer to golang's chosen architecture nomenclature;

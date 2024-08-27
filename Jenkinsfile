@@ -1,68 +1,52 @@
-// Update-branches job
 
-properties(
-  [
-    disableConcurrentBuilds(),
-    disableResume(),
-    buildDiscarder(
-      logRotator(
-        artifactDaysToKeepStr: '60',
-        daysToKeepStr: '60')
-    ),
-  ]
-)
+node() {
+    checkout scm
+    commonlib = load("pipeline-scripts/commonlib.groovy")
+    slacklib = commonlib.slacklib
 
-// https://issues.jenkins-ci.org/browse/JENKINS-33511
-def set_workspace() {
-  if(env.WORKSPACE == null) {
-    env.WORKSPACE = WORKSPACE = pwd()
-  }
-}
+    properties([
+        buildDiscarder(logRotator(artifactDaysToKeepStr: '', artifactNumToKeepStr: '', daysToKeepStr: '', numToKeepStr: '100')),
+        disableConcurrentBuilds(),
+        disableResume(),
+        [
+            $class: 'ParametersDefinitionProperty',
+            parameterDefinitions: [
+                string(
+                        name: 'CHANNEL',
+                        description: 'Where should we notify about ART threads',
+                        trim: true,
+                        defaultValue: "#team-art"
+                    ),
+                    booleanParam(
+                        name: 'DRY_RUN',
+                        description: 'Will not message to slack, if dry run is true',
+                        defaultValue: false
+                    ),
+                commonlib.mockParam(),
+            ]
+        ]
+    ])
 
-node('openshift-build-1') {
-  try {
-    timeout(time: 30, unit: 'MINUTES') {
-      deleteDir()
-      set_workspace()
-      dir('aos-cd-jobs') {
-        stage('clone') {
-          checkout scm
-          sh 'git checkout master'
+    commonlib.checkMock()
+
+    stage('Check unresolved ART threads') {
+        try {
+            withCredentials([
+                                string(credentialsId: "art-bot-slack-token", variable: "SLACK_API_TOKEN"),
+                                string(credentialsId: "art-bot-slack-user-token", variable: "SLACK_USER_TOKEN"),
+                                string(credentialsId: "art-bot-slack-signing-secret", variable: "SLACK_SIGNING_SECRET"),
+                                string(credentialsId: 'jenkins-service-account', variable: 'JENKINS_SERVICE_ACCOUNT'),
+                                string(credentialsId: 'jenkins-service-account-token', variable: 'JENKINS_SERVICE_ACCOUNT_TOKEN')
+                            ]) {
+                withEnv(["CHANNEL=${params.CHANNEL}", "DRY_RUN=${params.DRY_RUN}"]) {
+                    retry(10) {
+                        commonlib.shell(script: "python -- scheduled-jobs/scanning/art-notify/art-notify.py")
+                    }
+                }
+            }
+        } catch (e) {
+            slacklib.to('#team-art').say("Error while checking unresolved threads: ${env.BUILD_URL}")
+            throw(e)
         }
-        stage('run') {
-          final url = sh(
-            returnStdout: true,
-            script: 'git config remote.origin.url')
-          if(!(url =~ /^[-\w]+@[-\w]+(\.[-\w]+)*:/)) {
-            error('This job uses ssh keys for auth, please use an ssh url')
-          }
-          def prune = true, key = 'openshift-bot'
-          if(url.trim() != 'git@github.com:openshift-eng/aos-cd-jobs.git') {
-            prune = false
-            key = "${(url =~ /.*:([^\/]+)/)[0][1]}-aos-cd-bot"
-          }
-          sshagent([key]) {
-            sh """\
-python3 -m venv ../env/
-. ../env/bin/activate
-pip install gitpython
-export GIT_PYTHON_TRACE=full
-${prune ? 'python -m aos_cd_jobs.pruner' : 'echo Fork, skipping pruner'}
-python -m aos_cd_jobs.updater
-"""
-          }
-        }
-      }
     }
-  } catch(err) {
-    mail(
-      to: 'jupierce@redhat.com',
-      from: "aos-cicd@redhat.com",
-      subject: 'aos-cd-jobs-branches job: error',
-      body: """\
-Encountered an error while running the aos-cd-jobs-branches job: ${err}\n\n
-Jenkins job: ${env.BUILD_URL}
-""")
-    throw err
-  }
 }

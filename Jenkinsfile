@@ -35,11 +35,6 @@ node() {
                             description: "(For named assemblies) Rebuild even if a build already exists",
                             defaultValue: false
                         ),
-                        booleanParam(
-                            name: "FORCE_REBUILD_BOOTC",
-                            description: "(For named assemblies) Rebuild bootc image even if a build already exists",
-                            defaultValue: false
-                        ),
                         string(
                             name: 'RELEASE_PAYLOADS',
                             description: '(Optional) List of release payloads to rebase against; can be nightly names or full pullspecs',
@@ -49,11 +44,6 @@ node() {
                         booleanParam(
                             name: "NO_REBASE",
                             description: "(For testing only) Do not rebase microshift code; build the current source we have in the upstream repo",
-                            defaultValue: false
-                        ),
-                        booleanParam(
-                            name: "NO_ADVISORY_PREP",
-                            description: "(For testing only) Do not prepare microshift advisory for named assemblies",
                             defaultValue: false
                         ),
                         string(
@@ -82,7 +72,7 @@ node() {
         stage("initialize") {
             currentBuild.displayName += " $params.BUILD_VERSION - $params.ASSEMBLY"
             if (params.DRY_RUN) {
-                currentBuild.displayName += "[DRY RUN] " + currentBuild.displayName
+                currentBuild.displayName = "[DRY RUN] " + currentBuild.displayName
             }
         }
         try {
@@ -113,14 +103,8 @@ node() {
                 if (params.FORCE_REBUILD) {
                     cmd << "--force"
                 }
-                if (params.FORCE_REBUILD_BOOTC) {
-                    cmd << "--force-bootc"
-                }
                 if (params.NO_REBASE) {
                     cmd << "--no-rebase"
-                }
-                if (params.NO_ADVISORY_PREP) {
-                    cmd << "--no-advisory-prep"
                 }
                 withCredentials([
                     string(credentialsId: 'art-bot-slack-token', variable: 'SLACK_BOT_TOKEN'),
@@ -129,9 +113,6 @@ node() {
                     string(credentialsId: 'jenkins-service-account', variable: 'JENKINS_SERVICE_ACCOUNT'),
                     string(credentialsId: 'jenkins-service-account-token', variable: 'JENKINS_SERVICE_ACCOUNT_TOKEN'),
                     file(credentialsId: 'konflux-gcp-app-creds-prod', variable: 'GOOGLE_APPLICATION_CREDENTIALS'),
-                    file(credentialsId: 'openshift-bot-konflux-service-account', variable: 'KONFLUX_SA_KUBECONFIG'),
-                    file(credentialsId: 'aws-credentials-file', variable: 'AWS_SHARED_CREDENTIALS_FILE'),
-                    string(credentialsId: 's3-art-srv-enterprise-cloudflare-endpoint', variable: 'CLOUDFLARE_ENDPOINT'),
                 ]) {
                     echo "Will run ${cmd}"
                     buildlib.withAppCiAsArtPublish() {

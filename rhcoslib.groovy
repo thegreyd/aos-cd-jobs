@@ -88,7 +88,7 @@ def getRhcosBuildFromMirror(rhcosMirrorPrefix, name) {
 def rhcosSyncMirrorArtifacts(rhcosMirrorPrefix, arch, rhcosBuild, name) {
     // check if rhcos-id is already on the mirror
     if ( !params.FORCE ) {
-        def rhcosBuildOnMirror = getRhcosIdFromMirror(rhcosMirrorPrefix, name)
+        def rhcosBuildOnMirror = getRhcosBuildFromMirror(rhcosMirrorPrefix, name)
         if (rhcosBuildOnMirror == rhcosBuild) {
             echo("RHCOS build ${rhcosBuild} already on mirror, skipping sync")
             return

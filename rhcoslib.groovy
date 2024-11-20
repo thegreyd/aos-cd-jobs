@@ -87,7 +87,7 @@ def getRhcosBuildFromMirror(rhcosMirrorPrefix, name) {
     return rhcosId
 }
 
-def rhcosSyncMirrorArtifacts(rhcosMirrorPrefix, arch, rhcosBuild, name) {
+def rhcosSyncMirrorArtifacts(rhcosMirrorPrefix, arch, rhcosBuild, name, noLatest) {
     // check if rhcos-id is already on the mirror
     def rhcosBuildOnMirror = getRhcosBuildFromMirror(rhcosMirrorPrefix, name)
     echo("RHCOS build requested to sync: ${rhcosBuild}")
@@ -111,7 +111,7 @@ def rhcosSyncMirrorArtifacts(rhcosMirrorPrefix, arch, rhcosBuild, name) {
     if ( params.DRY_RUN ) {
             invokeOpts += " --test"
     }
-    if ( params.NO_LATEST ) {
+    if ( noLatest ) {
             invokeOpts += " --nolatest"
     }
 

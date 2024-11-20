@@ -106,7 +106,7 @@ node {
 
     print("RHCOS build: $rhcosBuild, arch: $arch, mirror prefix: $mirrorPrefix")
 
-    echo("Initializing RHCOS-${params.MIRROR_PREFIX} sync: #${currentBuild.number}")
+    echo("Initializing RHCOS-${mirrorPrefix} sync: #${currentBuild.number}")
     rhcoslib.initialize(ocpVersion, rhcosBuild, arch, name, mirrorPrefix)
 
     try {

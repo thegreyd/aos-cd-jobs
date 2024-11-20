@@ -94,7 +94,7 @@ def rhcosSyncMirrorArtifacts(rhcosMirrorPrefix, arch, rhcosBuild, name) {
     echo("RHCOS build on mirror: ${rhcosBuildOnMirror}")
     if (rhcosBuildOnMirror == rhcosBuild) {
         if ( params.FORCE ) {
-            echo("RHCOS build already on mirror, but forcing sync")
+            echo("RHCOS build ID found on mirror, but forcing sync")
         } else {
             echo("RHCOS build is already on mirror, skipping sync")
             return
@@ -102,7 +102,6 @@ def rhcosSyncMirrorArtifacts(rhcosMirrorPrefix, arch, rhcosBuild, name) {
     } else {
         echo("RHCOS build ${rhcosBuild} not on mirror, syncing")
     }
-
 
     def invokeOpts = " --prefix ${rhcosMirrorPrefix}" +
         " --arch ${arch}" +

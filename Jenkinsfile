@@ -65,33 +65,46 @@ node {
     }
 
     tag = params.RELEASE_TAG
-    image = "quay.io/openshift-release-dev/ocp-release:${tag}"
-    if (tag.contains("/")) {
-        // assume instead of a tag it's a pullspec e.g. to registry.ci
-        if (!tag.contains(":")) error("RELEASE_TAG pullspec must include a :tag")
-        image = tag
-        tag = tag.split(":")[-1]
-    }
 
     (major, minor) = commonlib.extractMajorMinorVersionNumbers(tag)
     ocpVersion = "$major.$minor"
 
     (arch, priv) = releaselib.getReleaseTagArchPriv(tag)
+    suffix = releaselib.getArchPrivSuffix(arch, priv)
 
+    pullspec = ""
+    if (tag.contains("/")) {
+        // assume instead of a tag it's a pullspec e.g. to registry.ci
+        if (!tag.contains(":")) error("RELEASE_TAG pullspec must include a :tag")
+        pullspec = tag
+        tag = tag.split(":")[-1]
+    }
+    if (pullspec == "") {
+        if (tag.contains("nightly")) {
+            pullspec = "registry.ci.openshift.org/ocp${suffix}/release${suffix}:${tag}"
+        } else {
+            pullspec = "quay.io/openshift-release-dev/ocp-release:${tag}"
+        }
+    }
+
+    onlyIfDifferent = false
     noLatest = params.NO_LATEST
+    // for nightlies, sync them to dev dir
+    // This is a special case. see: ART-10946
     if (tag.contains("nightly")) {
         name = "dev-${ocpVersion}"
         noLatest = true
+        onlyIfDifferent = true
     } else {
         name = commonlib.shell(
             returnStdout: true,
-            script: "oc adm release info -o template --template '{{ .metadata.version }}' ${image}"
+            script: "oc adm release info -o template --template '{{ .metadata.version }}' ${pullspec}"
         )
     }
 
     cmd = """
         tmp=\$(mktemp -d /tmp/tmp.XXXXXX)
-        oc image extract --path /manifests/:\$tmp \$(oc adm release info --image-for installer ${image})
+        oc image extract --path /manifests/:\$tmp \$(oc adm release info --image-for installer ${pullspec})
         cat \$tmp/coreos-bootimages.yaml | yq -r .data.stream | jq -r .architectures.${arch}.artifacts.qemu.release
         rm -rf \$tmp
     """
@@ -114,7 +127,7 @@ node {
             rhcoslib.rhcosSyncPrintArtifacts()
         }
         stage("Mirror artifacts") {
-            rhcoslib.rhcosSyncMirrorArtifacts(mirrorPrefix, arch, rhcosBuild, name, noLatest)
+            rhcoslib.rhcosSyncMirrorArtifacts(mirrorPrefix, arch, rhcosBuild, name, noLatest, onlyIfDifferent)
         }
         stage("Slack notification to release channel") {
             if ( !params.DRY_RUN ) {

@@ -52,7 +52,7 @@ def rhcosSyncPrintArtifacts() {
 
 def getRhcosBuildFromMirror(rhcosMirrorPrefix, name) {
     def rhcosIdUrl = "https://mirror.openshift.com${s3MirrorBaseDir}/${rhcosMirrorPrefix}/${name}/rhcos-id.txt"
-    def res = commonlib.shell(script: "curl --fail --silent -L ${rhcosIdUrl}", returnAll: true)
+    def res = commonlib.shell(script: "curl --fail --silent --retry 3 --retry-delay 10 -L ${rhcosIdUrl}", returnAll: true)
     def rhcosId = "[NOT FOUND]"
     if (res.returnStatus == 0) {
         rhcosId = res.stdout.trim()
@@ -60,15 +60,13 @@ def getRhcosBuildFromMirror(rhcosMirrorPrefix, name) {
     return rhcosId
 }
 
-def rhcosSyncMirrorArtifacts(rhcosMirrorPrefix, arch, rhcosBuild, name, noLatest) {
+def rhcosSyncMirrorArtifacts(rhcosMirrorPrefix, arch, rhcosBuild, name, noLatest, onlyIfDifferent) {
     // check if rhcos-id is already on the mirror
     def rhcosBuildOnMirror = getRhcosBuildFromMirror(rhcosMirrorPrefix, name)
     echo("RHCOS build requested to sync: ${rhcosBuild}")
     echo("RHCOS build on mirror: ${rhcosBuildOnMirror}")
     if (rhcosBuildOnMirror == rhcosBuild) {
-        if ( params.FORCE ) {
-            echo("RHCOS build ID found on mirror, but forcing sync")
-        } else {
+        if (!params.FORCE && onlyIfDifferent) {
             echo("RHCOS build is already on mirror, skipping sync")
             return
         }

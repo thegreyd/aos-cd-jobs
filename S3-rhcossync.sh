@@ -39,7 +39,7 @@ EOF
 
 function downloadImages() {
     for img in $(<"${SYNCLIST}"); do
-        curl -L --fail --retry 5 -O "$img"
+        curl -L --fail --silent --retry 5 -O "$img"
     done
     # rename files to indicate the release they match (including arch suffix by tradition).
     # also create an unversioned symlink to enable consistent incoming links.

@@ -17,7 +17,7 @@ def initialize(ocpVersion, rhcosBuild, arch, name, mirrorPrefix) {
     buildlib.cleanWorkdir(rhcosWorking)
 
     def baseUrl = buildlib.doozer("--quiet --group=openshift-${ocpVersion} config:read-group urls.rhcos_release_base.multi --default ''", [capture: true]).trim()
-    baseUrl = "/${baseUrl}/${rhcosBuild}/${arch}"
+    baseUrl = "${baseUrl}/${rhcosBuild}/${arch}"
 
     s3MirrorBaseDir = "/pub/openshift-v4/${arch}/dependencies/rhcos"
     metaUrl = "${baseUrl}/meta.json"

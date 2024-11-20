@@ -79,7 +79,7 @@ def rhcosSyncPrintArtifacts() {
 
 def getRhcosBuildFromMirror(rhcosMirrorPrefix, name) {
     def rhcosIdUrl = "https://mirror.openshift.com${s3MirrorBaseDir}/${rhcosMirrorPrefix}/${name}/rhcos-id.txt"
-    def rhcosId = sh(script: "curl --silent -L ${rhcosIdUrl}", returnStdout: true).trim()
+    def rhcosId = sh(script: "curl --fail --silent -L ${rhcosIdUrl}", returnStdout: true).trim()
     return rhcosId
 }
 

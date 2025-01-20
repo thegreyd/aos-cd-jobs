@@ -210,9 +210,7 @@ node() {
                     string(credentialsId: 'redis-server-password', variable: 'REDIS_SERVER_PASSWORD'),
                     string(credentialsId: 'openshift-bot-token', variable: 'GITHUB_TOKEN')
                 ]) {
-                    withEnv(["BUILD_URL=${BUILD_URL}", "JOB_NAME=${JOB_NAME}"]) {
-                        sh(script: cmd.join(' '), returnStdout: true)
-                    }
+                    sh(script: cmd.join(' '), returnStdout: true)
                 }
             }
 

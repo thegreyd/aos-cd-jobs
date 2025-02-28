@@ -6,8 +6,8 @@ node() {
         def buildlib = load("pipeline-scripts/buildlib.groovy")
         def commonlib = buildlib.commonlib
 
-        commonlib.describeJob("build-microshift-bootc", """
-            <h2>Build and release microshift-bootc image for an assembly.</h2>
+        commonlib.describeJob("functional-tests", """
+            <h2>Run art-tools functional test suite</h2>
         """)
 
         properties(
@@ -22,40 +22,13 @@ node() {
                 [
                     $class: "ParametersDefinitionProperty",
                     parameterDefinitions: [
-                        commonlib.ocpVersionParam('BUILD_VERSION', '4'),
-                        commonlib.artToolsParam(),
                         string(
-                            name: "ASSEMBLY",
-                            description: "The name of an assembly to rebase & build for. e.g. 4.9.1",
-                            defaultValue: "test",
-                            trim: true
-                        ),
-                        booleanParam(
-                            name: "FORCE_REBUILD",
-                            description: "Rebuild even if a build already exists",
-                            defaultValue: false
-                        ),
-                        booleanParam(
-                            name: "FORCE_PLASHET_SYNC",
-                            description: "Force plashet sync needed for the build",
-                            defaultValue: false
-                        ),
-                        string(
-                            name: 'DOOZER_DATA_PATH',
-                            description: 'ocp-build-data fork to use (e.g. assembly definition in your own fork)',
-                            defaultValue: "https://github.com/openshift-eng/ocp-build-data",
+                            name: 'MAKE_TARGETS',
+                            description: 'The make targets to run (comma separated)',
+                            defaultValue: 'functional-elliott',
                             trim: true,
                         ),
-                        booleanParam(
-                            name: 'IGNORE_LOCKS',
-                            description: 'Do not wait for other builds in this version to complete (use only if you know they will not conflict)',
-                            defaultValue: false
-                        ),
-                        booleanParam(
-                            name: "DRY_RUN",
-                            description: "Take no action, just echo what the job would have done.",
-                            defaultValue: false
-                        ),
+                        commonlib.artToolsParam(),
                         commonlib.mockParam(),
                     ]
                 ],
@@ -64,64 +37,21 @@ node() {
 
         commonlib.checkMock()
         stage("initialize") {
-            currentBuild.displayName += " $params.BUILD_VERSION - $params.ASSEMBLY"
-            if (params.DRY_RUN) {
-                currentBuild.displayName = "[DRY RUN] " + currentBuild.displayName
-            }
+            currentBuild.displayName += " [$params.MAKE_TARGETS]"
         }
-        try {
-            stage("build") {
-                buildlib.cleanWorkdir("./artcd_working")
-                sh "mkdir -p ./artcd_working"
-                def cmd = [
-                    "artcd",
-                    "-vv",
-                    "--working-dir=./artcd_working",
-                    "--config", "./config/artcd.toml",
-                ]
-
-                if (params.DRY_RUN) {
-                    cmd << "--dry-run"
-                }
-                cmd += [
-                    "build-microshift-bootc",
-                    "--data-path", params.DOOZER_DATA_PATH,
-                    "-g", "openshift-$params.BUILD_VERSION",
-                    "--assembly", params.ASSEMBLY,
-                ]
-                if (params.FORCE_REBUILD) {
-                    cmd << "--force"
-                }
-                if (params.FORCE_PLASHET_SYNC) {
-                    cmd << "--force-plashet-sync"
-                }
-                withCredentials([
-                    string(credentialsId: 'art-bot-slack-token', variable: 'SLACK_BOT_TOKEN'),
-                    string(credentialsId: 'openshift-bot-token', variable: 'GITHUB_TOKEN'),
-                    file(credentialsId: 'konflux-gcp-app-creds-prod', variable: 'GOOGLE_APPLICATION_CREDENTIALS'),
-                    file(credentialsId: 'openshift-bot-konflux-service-account', variable: 'KONFLUX_SA_KUBECONFIG'),
-                    file(credentialsId: 'aws-credentials-file', variable: 'AWS_SHARED_CREDENTIALS_FILE'),
-                    string(credentialsId: 's3-art-srv-enterprise-cloudflare-endpoint', variable: 'CLOUDFLARE_ENDPOINT'),
-                ]) {
-                    echo "Will run ${cmd}"
-                    buildlib.withAppCiAsArtPublish() {
-                        if (params.IGNORE_LOCKS) {
-                            commonlib.shell(script: cmd.join(' '))
-                        } else {
-                            lock("build-microshift-bootc-lock-${params.BUILD_VERSION}") {
-                                commonlib.shell(script: cmd.join(' '))
-                            }
-                        }
+        stage("build") {
+            withCredentials([
+                string(credentialsId: 'openshift-bot-token', variable: 'GITHUB_TOKEN'),
+                string(credentialsId: 'jboss-jira-token', variable: 'JIRA_TOKEN'),
+                file(credentialsId: 'konflux-gcp-app-creds-prod', variable: 'GOOGLE_APPLICATION_CREDENTIALS'),
+            ]) {
+                dir("${env.WORKSPACE}/art-tools") {
+                    for (String target : params.MAKE_TARGETS.split(',')) {
+                        target = target.trim()
+                        echo "Building target: ${target}"
+                        commonlib.shell(script: "make ${target}")
                     }
                 }
-            }
-        } finally {
-            stage("save artifacts") {
-                commonlib.safeArchiveArtifacts([
-                    "artcd_working/email/**",
-                    "artcd_working/**/*.json",
-                    "artcd_working/**/*.log",
-                ])
             }
         }
     }

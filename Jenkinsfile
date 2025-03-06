@@ -50,7 +50,11 @@ node() {
                         target = target.trim()
                         echo "Building target: ${target}"
                         withEnv(['UV_LINK_MODE=symlink', 'PATH+MYCARGO=~/.cargo/bin']) {
-                            commonlib.shell(script: "make ${target}")
+                            commonlib.shell(script: """
+                                echo \$PATH
+                                which uv
+                                make ${target}
+                            """)
                         }
                     }
                 }

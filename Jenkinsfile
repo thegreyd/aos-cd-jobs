@@ -49,13 +49,9 @@ node() {
                     for (String target : params.MAKE_TARGETS.split(',')) {
                         target = target.trim()
                         echo "Building target: ${target}"
-                        withEnv(['UV_LINK_MODE=symlink', 'PATH+MYCARGO=~/.cargo/bin']) {
-                            commonlib.shell(script: """
-                                echo \$PATH
-                                which uv
-                                make ${target}
-                            """)
-                        }
+                        // make doesn't inherit / work with jenkins's withEnv directive
+                        // explicitly pass in PATH which has uv path for make tasks
+                        commonlib.shell(script: "PATH+MYCARGO=~/.cargo/bin make ${target}")
                     }
                 }
             }

@@ -51,7 +51,7 @@ node() {
                         echo "Building target: ${target}"
                         // make doesn't inherit / work with jenkins's withEnv directive
                         // explicitly pass in PATH which has uv path for make tasks
-                        commonlib.shell(script: "PATH+MYCARGO=~/.cargo/bin make ${target}")
+                        commonlib.shell(script: "PATH=~/.cargo/bin:$PATH make ${target}")
                     }
                 }
             }

@@ -7,7 +7,7 @@ node() {
         def commonlib = buildlib.commonlib
 
         commonlib.describeJob("konflux-release", """
-            <h2>Create a Konflux Release</h2>
+            <h2>Create a Konflux Release from a Shipment config</h2>
         """)
 
         properties(
@@ -30,33 +30,33 @@ node() {
                             defaultValue: "test",
                             trim: true
                         ),
-                        booleanParam(
-                            name: "FORCE",
-                            description: "Proceed even if an already existing release/advisory is detected",
-                            defaultValue: false
-                        ),
                         string(
                             name: 'RELEASE_ENVIRONMENT',
-                            description: 'The release environment to operate on from the config file e.g. stage, prod',
+                            description: '(Required) The environment where release should be created to e.g. stage, prod',
                             defaultValue: '',
                             trim: true
                         ),
                         string(
-                            name: 'KONFLUX_RELEASE_DATA_PATH',
-                            description: '(Optional) konflux-release-data fork to use (e.g. release definition in your own fork). To point to a branch/commit use repo@commitish',
-                            defaultValue: "https://gitlab.cee.redhat.com/hybrid-platforms/art/konflux-release-data",
+                            name: 'CONFIG_PATH',
+                            description: '(Required) Release config to use',
+                            defaultValue: '',
+                            trim: true
+                        ),
+                        string(
+                            name: 'SHIPMENT_REPO_URL',
+                            description: '(Optional) shipment-data repo to use. To point to a branch/commit use repo@commitish (e.g. https://gitlab.cee.redhat.com/sidsharm/ocp-shipment-data@mybranch). Leave empty for the official repo to be picked.',
+                            defaultValue: '',
                             trim: true,
-                        ),
-                        string(
-                            name: 'CONFIG_FILENAME',
-                            description: '(Optional) Release config filename to use. Defaults to assembly name',
-                            defaultValue: '',
-                            trim: true
                         ),
                         booleanParam(
                             name: "DRY_RUN",
                             description: "Take no action, just echo what the job would have done.",
                             defaultValue: true
+                        ),
+                        booleanParam(
+                            name: "FORCE",
+                            description: "Proceed even if an already existing release/advisory is detected",
+                            defaultValue: false
                         ),
                         commonlib.mockParam(),
                     ]
@@ -67,8 +67,8 @@ node() {
         commonlib.checkMock()
         stage("initialize") {
             def name = params.ASSEMBLY
-            if (params.CONFIG_FILENAME) {
-                name = params.CONFIG_FILENAME
+            if (params.CONFIG_PATH) {
+                name = params.CONFIG_PATH
             }
             currentBuild.displayName += " ${params.BUILD_VERSION} - ${name}"
             if (params.RELEASE_ENVIRONMENT) {
@@ -94,16 +94,16 @@ node() {
                 }
                 cmd += [
                     "konflux-release",
-                    "--konflux-release-path", params.KONFLUX_RELEASE_DATA_PATH,
                     "--group", "openshift-${params.BUILD_VERSION}",
                     "--assembly", params.ASSEMBLY,
-                    params.RELEASE_ENVIRONMENT,
+                    "--env", params.RELEASE_ENVIRONMENT,
+                    "--config", params.CONFIG_PATH,
                 ]
+                if (params.SHIPMENT_REPO_URL) {
+                    cmd << "--shipment-path=${params.SHIPMENT_REPO_URL}"
+                }
                 if (params.FORCE) {
                     cmd << "--force"
-                }
-                if (params.CONFIG_FILENAME) {
-                    cmd << "--config-filename=${params.CONFIG_FILENAME}"
                 }
                 withCredentials([
                     file(credentialsId: 'openshift-bot-ocp-konflux-service-account', variable: 'KONFLUX_SA_KUBECONFIG'),

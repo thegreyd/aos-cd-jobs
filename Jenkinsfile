@@ -31,32 +31,16 @@ node() {
                             trim: true
                         ),
                         string(
-                            name: 'RELEASE_ENVIRONMENT',
-                            description: '(Required) The environment where release should be created to e.g. stage, prod',
-                            defaultValue: '',
+                            name: "APPLICATION",
+                            description: "The name of the associated Konflux application",
+                            defaultValue: "test",
                             trim: true
                         ),
                         string(
-                            name: 'CONFIG_PATH',
-                            description: '(Required) Release config to use',
-                            defaultValue: '',
+                            name: "ADVISORY_KEY",
+                            description: "Name of the advisory template to use for shipment",
+                            defaultValue: "",
                             trim: true
-                        ),
-                        string(
-                            name: 'SHIPMENT_REPO_URL',
-                            description: '(Optional) shipment-data repo to use. To point to a branch/commit use repo@commitish (e.g. https://gitlab.cee.redhat.com/sidsharm/ocp-shipment-data@mybranch). Leave empty for the official repo to be picked.',
-                            defaultValue: '',
-                            trim: true,
-                        ),
-                        booleanParam(
-                            name: "DRY_RUN",
-                            description: "Take no action, just echo what the job would have done.",
-                            defaultValue: true
-                        ),
-                        booleanParam(
-                            name: "FORCE",
-                            description: "Proceed even if an already existing release/advisory is detected",
-                            defaultValue: false
                         ),
                         commonlib.mockParam(),
                     ]
@@ -66,17 +50,7 @@ node() {
 
         commonlib.checkMock()
         stage("initialize") {
-            def name = params.ASSEMBLY
-            if (params.CONFIG_PATH) {
-                name = params.CONFIG_PATH
-            }
-            currentBuild.displayName += " ${params.BUILD_VERSION} - ${name}"
-            if (params.RELEASE_ENVIRONMENT) {
-                currentBuild.displayName += " ${params.RELEASE_ENVIRONMENT}"
-            }
-            if (params.DRY_RUN) {
-                currentBuild.displayName = "[DRY RUN] " + currentBuild.displayName
-            }
+            currentBuild.displayName += " ${params.BUILD_VERSION} - ${params.ASSEMBLY} - ${params.APPLICATION}"
         }
         try {
             stage("build") {
@@ -89,32 +63,17 @@ node() {
                     "--config", "./config/artcd.toml",
                 ]
 
-                if (params.DRY_RUN) {
-                    cmd << "--dry-run"
-                }
                 cmd += [
-                    "konflux-release",
+                    "prepare-shipment",
                     "--group", "openshift-${params.BUILD_VERSION}",
                     "--assembly", params.ASSEMBLY,
-                    "--env", params.RELEASE_ENVIRONMENT,
-                    "--config", params.CONFIG_PATH,
+                    "--application", params.APPLICATION,
                 ]
-                if (params.SHIPMENT_REPO_URL) {
-                    cmd << "--shipment-path=${params.SHIPMENT_REPO_URL}"
+                if (params.ADVISORY_KEY) {
+                    cmd << "--advisory-key=${params.ADVISORY_KEY}"
                 }
-                if (params.FORCE) {
-                    cmd << "--force"
-                }
-                withCredentials([
-                    file(credentialsId: 'openshift-bot-ocp-konflux-service-account', variable: 'KONFLUX_SA_KUBECONFIG'),
-                    string(credentialsId: 'sid-gitlab-access-token', variable: 'GITLAB_TOKEN'),
-                    file(credentialsId: 'konflux-gcp-app-creds-prod', variable: 'GOOGLE_APPLICATION_CREDENTIALS'),
-                    string(credentialsId: 'konflux-art-images-username', variable: 'KONFLUX_ART_IMAGES_USERNAME'),
-                    string(credentialsId: 'konflux-art-images-password', variable: 'KONFLUX_ART_IMAGES_PASSWORD'),
-                ]) {
-                    echo "Will run ${cmd}"
-                    commonlib.shell(script: cmd.join(' '))
-                }
+                echo "Will run ${cmd}"
+                commonlib.shell(script: cmd.join(' '))
             }
         } finally {
             stage("save artifacts") {

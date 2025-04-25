@@ -63,7 +63,7 @@ node() {
                     "--working-dir=./artcd_working",
                     "--config", "./config/artcd.toml",
                 ]
-                if (params.DRYRUN) {
+                if (params.DRY_RUN) {
                     cmd += ["--dry-run"]
                 }
 

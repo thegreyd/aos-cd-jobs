@@ -6,8 +6,8 @@ node() {
         def buildlib = load("pipeline-scripts/buildlib.groovy")
         def commonlib = buildlib.commonlib
 
-        commonlib.describeJob("konflux-release", """
-            <h2>Create a Konflux Release from a Shipment config</h2>
+        commonlib.describeJob("prepare-release-konflux", """
+            <h2>Prepare an OCP release to release via Konflux</h2>
         """)
 
         properties(
@@ -31,14 +31,8 @@ node() {
                             trim: true
                         ),
                         string(
-                            name: "APPLICATION",
-                            description: "The name of the associated Konflux application",
-                            defaultValue: "test",
-                            trim: true
-                        ),
-                        string(
-                            name: "ADVISORY_KEY",
-                            description: "Name of the advisory template to use for shipment",
+                            name: "SHIPMENT_REPO_URL",
+                            description: "(Optional) URL of the shipment repo to use instead of the default one",
                             defaultValue: "",
                             trim: true
                         ),
@@ -50,7 +44,7 @@ node() {
 
         commonlib.checkMock()
         stage("initialize") {
-            currentBuild.displayName += " ${params.BUILD_VERSION} - ${params.ASSEMBLY} - ${params.APPLICATION}"
+            currentBuild.displayName += " ${params.BUILD_VERSION} - ${params.ASSEMBLY}"
         }
         try {
             stage("build") {
@@ -64,16 +58,20 @@ node() {
                 ]
 
                 cmd += [
-                    "prepare-shipment",
+                    "prepare-release-konflux",
                     "--group", "openshift-${params.BUILD_VERSION}",
                     "--assembly", params.ASSEMBLY,
-                    "--application", params.APPLICATION,
                 ]
-                if (params.ADVISORY_KEY) {
-                    cmd << "--advisory-key=${params.ADVISORY_KEY}"
+                if (params.SHIPMENT_REPO_URL) {
+                    cmd += ["--shipment-data-path", params.SHIPMENT_REPO_URL]
                 }
                 echo "Will run ${cmd}"
-                commonlib.shell(script: cmd.join(' '))
+                
+                withCredentials([
+                    string(credentialsId: 'art-bot-slack-token', variable: 'SLACK_BOT_TOKEN'),
+                ]) {
+                    commonlib.shell(script: cmd.join(' '))
+                }
             }
         } finally {
             stage("save artifacts") {

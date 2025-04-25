@@ -31,11 +31,18 @@ node() {
                             trim: true
                         ),
                         string(
-                            name: "SHIPMENT_REPO_URL",
-                            description: "(Optional) URL of the shipment repo to use instead of the default one",
+                            name: "BUILD_REPO_URL",
+                            description: "(Optional) URL of the build-data repo to use instead of the default one. Defaults to group branch - to use a different branch/commit use repo@branch",
                             defaultValue: "",
                             trim: true
                         ),
+                        string(
+                            name: "SHIPMENT_REPO_URL",
+                            description: "(Optional) URL of the shipment-data repo to use instead of the default one. Defaults to `main` branch - to use a different branch/commit use repo@branch",
+                            defaultValue: "",
+                            trim: true
+                        ),
+                        commonlib.dryrunParam(),
                         commonlib.mockParam(),
                     ]
                 ],
@@ -52,10 +59,13 @@ node() {
                 sh "mkdir -p ./artcd_working"
                 def cmd = [
                     "artcd",
-                    "-vv",
+                    "-v",
                     "--working-dir=./artcd_working",
                     "--config", "./config/artcd.toml",
                 ]
+                if (params.DRYRUN) {
+                    cmd += ["--dry-run"]
+                }
 
                 cmd += [
                     "prepare-release-konflux",
@@ -64,6 +74,9 @@ node() {
                 ]
                 if (params.SHIPMENT_REPO_URL) {
                     cmd += ["--shipment-data-path", params.SHIPMENT_REPO_URL]
+                }
+                if (params.BUILD_REPO_URL) {
+                    cmd += ["--build-data-path", params.BUILD_REPO_URL]
                 }
                 echo "Will run ${cmd}"
                 

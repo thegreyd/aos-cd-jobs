@@ -32,13 +32,13 @@ node() {
                         ),
                         string(
                             name: "BUILD_REPO_URL",
-                            description: "(Optional) URL of the build-data repo to use instead of the default one. Defaults to group branch - to use a different branch/commit use repo@branch",
+                            description: "(Optional) Override build-data repo. Defaults to group branch - to use a different branch/commit use repo@branch. e.g. https://github.com/thegreyd/ocp-build-data@prep-shipment-4.19.ec5",
                             defaultValue: "",
                             trim: true
                         ),
                         string(
-                            name: "SHIPMENT_REPO_URL",
-                            description: "(Optional) URL of the shipment-data repo to use instead of the default one. Defaults to `main` branch - to use a different branch/commit use repo@branch",
+                            name: "TARGET_SHIPMENT_REPO_URL",
+                            description: "(Optional) Override shipment-data repo for opening shipment MR. Target branch will be `main`",
                             defaultValue: "",
                             trim: true
                         ),
@@ -73,7 +73,7 @@ node() {
                     "--assembly", params.ASSEMBLY,
                 ]
                 if (params.SHIPMENT_REPO_URL) {
-                    cmd += ["--shipment-data-path", params.SHIPMENT_REPO_URL]
+                    cmd += ["--target-shipment-repo-url", params.TARGET_SHIPMENT_REPO_URL]
                 }
                 if (params.BUILD_REPO_URL) {
                     cmd += ["--build-data-path", params.BUILD_REPO_URL]

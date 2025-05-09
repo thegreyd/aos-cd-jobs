@@ -37,7 +37,7 @@ node() {
                             trim: true
                         ),
                         string(
-                            name: "TARGET_SHIPMENT_REPO_URL",
+                            name: "SHIPMENT_REPO_URL",
                             description: "(Optional) Override shipment-data repo for opening shipment MR. Target branch will be `main`",
                             defaultValue: "",
                             trim: true
@@ -73,10 +73,10 @@ node() {
                     "--assembly", params.ASSEMBLY,
                 ]
                 if (params.SHIPMENT_REPO_URL) {
-                    cmd += ["--target-shipment-repo-url", params.TARGET_SHIPMENT_REPO_URL]
+                    cmd += ["--shipment-repo-url", params.SHIPMENT_REPO_URL]
                 }
                 if (params.BUILD_REPO_URL) {
-                    cmd += ["--build-data-path", params.BUILD_REPO_URL]
+                    cmd += ["--build-repo-url", params.BUILD_REPO_URL]
                 }
                 echo "Will run ${cmd}"
                 

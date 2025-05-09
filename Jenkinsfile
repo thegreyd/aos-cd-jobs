@@ -85,6 +85,7 @@ node() {
                     string(credentialsId: 'ocp-shipment-data-gitlab-push-token', variable: 'GITLAB_TOKEN'),
                     string(credentialsId: 'openshift-bot-token', variable: 'GITHUB_TOKEN'),
                     string(credentialsId: 'jboss-jira-token', variable: 'JIRA_TOKEN'),
+                    file(credentialsId: 'konflux-gcp-app-creds-prod', variable: 'GOOGLE_APPLICATION_CREDENTIALS'),
                 ]) {
                     commonlib.shell(script: cmd.join(' '))
                 }

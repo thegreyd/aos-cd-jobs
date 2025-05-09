@@ -83,6 +83,7 @@ node() {
                 withCredentials([
                     string(credentialsId: 'art-bot-slack-token', variable: 'SLACK_BOT_TOKEN'),
                     string(credentialsId: 'ocp-shipment-data-gitlab-push-token', variable: 'GITLAB_TOKEN'),
+                    string(credentialsId: 'openshift-bot-token', variable: 'GITHUB_TOKEN'),
                 ]) {
                     commonlib.shell(script: cmd.join(' '))
                 }

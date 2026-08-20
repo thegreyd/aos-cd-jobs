@@ -7,14 +7,23 @@ node() {
     def buildlib = load("pipeline-scripts/buildlib.groovy")
     def commonlib = buildlib.commonlib
 
-    commonlib.describeJob("release-payload", """
-        <h2>Build OpenShift release payload images in Konflux</h2>
-        <b>Timing</b>: Triggered automatically by promote-assembly after a successful promote.
-        Can also be triggered manually.
+    commonlib.describeJob("sign-existing-releases", """
+        <h2>Retroactively sign existing release payloads (and their referenced components) with Sigstore/cosign</h2>
+        <b>Timing</b>: Run manually, on demand.
 
-        Invokes <code>artcd build-release-payload</code> to rebase
-        the release payload source repo and trigger a Konflux build that produces a
-        multi-arch manifest-list image. Cosigns the result after a successful sync.
+        Runs the standalone <code>pyartcd/hack/sign_existing_releases.py</code> tool against
+        release payloads that already exist in quay.io. It reuses the production
+        <code>SigstoreSignatory</code> signing logic:
+        <ul>
+          <li>Release images are signed with <b>tag identity</b> only by default (digest
+              signatures usually already exist for released payloads). Use <code>SIGN_DIGEST</code>
+              to also create digest-identity signatures for the release images.</li>
+          <li>Referenced component images are discovered by spidering each payload with
+              <code>oc adm release info -o json</code> and are signed with <b>digest identity</b> only.
+              Multi-arch references are expanded to and signed for every architecture.</li>
+        </ul>
+        <code>SIGN_RELEASE</code> selects the scope: <code>yes</code> (release images + components),
+        <code>only</code> (release images only), or <code>no</code> (referenced components only).
     """)
 
     properties([
@@ -29,26 +38,34 @@ node() {
         [
             $class: 'ParametersDefinitionProperty',
             parameterDefinitions: [
-                commonlib.ocpVersionParam('VERSION', '4plus'),
                 commonlib.artToolsParam(),
-                string(
-                    name: 'ASSEMBLY',
-                    description: 'Assembly name to build the release payload for (e.g. 4.21.1 or stream).',
-                    defaultValue: 'stream',
-                    trim: true,
-                ),
-                string(
-                    name: 'NVR',
-                    description: 'If set, skip rebase and build — only sync this already-built payload NVR to quay.io. Requires a non-dry-run run.',
+                text(
+                    name: 'PULLSPECS',
+                    description: 'Release image pullspecs to sign, one per line (blank lines and # comments ignored). ' +
+                        'Tag-based pullspecs are required for release-image signing, e.g.\n' +
+                        'quay.io/openshift-release-dev/ocp-release:4.16.4-multi',
                     defaultValue: '',
-                    trim: true,
                 ),
-                commonlib.dryrunParam('Do not push to git or trigger a Konflux build. Manifests are generated locally only.'),
+                choice(
+                    name: 'SIGN_RELEASE',
+                    description: 'What to sign: yes = release images + referenced components; ' +
+                        'only = release images only; no = referenced components only.',
+                    choices: ['yes', 'no', 'only'].join('\n'),
+                ),
                 booleanParam(
-                    name: 'SYNC',
-                    description: 'After a successful build, mirror the release payload manifest list and every per-arch image to quay.io/openshift-release-dev/ocp-release (each pinned by its own sha256-<digest> tag). Requires a non-dry-run build (uses --push).',
+                    name: 'SIGN_DIGEST',
+                    description: 'Also sign the release images with digest identity ' +
+                        '(default: tag-only, appropriate for retroactive signing where digest signatures already exist). ' +
+                        'Does not affect component images, which are always digest-only.',
                     defaultValue: false,
                 ),
+                string(
+                    name: 'CONCURRENCY',
+                    description: 'Maximum concurrent signing/discovery operations.',
+                    defaultValue: '50',
+                    trim: true,
+                ),
+                commonlib.dryrunParam('Do not actually sign anything; log what would be signed. Uses stage KMS credentials.'),
                 commonlib.mockParam(),
             ],
         ]
@@ -56,36 +73,38 @@ node() {
 
     commonlib.checkMock()
 
-    currentBuild.displayName += " ${params.VERSION} - ${params.ASSEMBLY}"
+    // Parse pullspecs: drop blank lines and comments.
+    def pullspecs = params.PULLSPECS.split('\n')*.trim().findAll { it && !it.startsWith('#') }
+
+    currentBuild.displayName += " ${params.SIGN_RELEASE} (${pullspecs.size()} pullspec(s))"
     if (params.DRY_RUN) {
         currentBuild.displayName += " [DRY RUN]"
     }
 
     stage("Validate parameters") {
-        if (!params.VERSION?.trim()) {
-            error("VERSION is required")
+        if (!pullspecs) {
+            error("PULLSPECS is required: provide at least one release image pullspec.")
         }
-        if (!params.ASSEMBLY?.trim()) {
-            error("ASSEMBLY is required")
+        if (!(params.CONCURRENCY?.trim() ==~ /\d+/)) {
+            error("CONCURRENCY must be a positive integer.")
         }
-        echo "Will build release payload:"
-        echo "  group:    openshift-${params.VERSION}"
-        echo "  assembly: ${params.ASSEMBLY}"
-        echo "  NVR:      ${params.NVR ?: '(build new)'}"
-        echo "  dry run:  ${params.DRY_RUN}"
-        echo "  sync:     ${params.SYNC}"
+        echo "Will sign:"
+        echo "  scope (SIGN_RELEASE): ${params.SIGN_RELEASE}"
+        echo "  sign release digest:  ${params.SIGN_DIGEST}"
+        echo "  concurrency:          ${params.CONCURRENCY}"
+        echo "  dry run:              ${params.DRY_RUN}"
+        pullspecs.each { echo "  - ${it}" }
     }
 
+    // Use stage signing infrastructure for dry runs, prod for real signing.
     def signing_env = params.DRY_RUN ? "stage" : "prod"
     def sigstore_creds_file = signing_env == "prod" ? "kms_prod_release_signing_creds_file" : "kms_stage_release_signing_creds_file"
     def sigstore_key_id = signing_env == "prod" ? "kms_prod_release_signing_key_id" : "kms_stage_release_signing_key_id"
 
-    stage("build-release-payload") {
+    stage("sign-existing-releases") {
         def cmd = [
-            "artcd",
-            "-v",
-            "--working-dir=./artcd_working",
-            "--config=./config/artcd.toml",
+            "python",
+            "./art-tools/pyartcd/hack/sign_existing_releases.py",
         ]
 
         if (params.DRY_RUN) {
@@ -93,47 +112,37 @@ node() {
         }
 
         cmd += [
-            "build-release-payload",
-            "--group", "openshift-${params.VERSION}",
-            "--assembly", params.ASSEMBLY,
+            "--sign-release", params.SIGN_RELEASE,
+            "--concurrency", params.CONCURRENCY.trim(),
+            "--file", "artcd_working/pullspecs.txt",
         ]
 
-        if (params.NVR?.trim()) {
-            cmd += ["--nvr", params.NVR.trim()]
-        }
-
-        if (params.SYNC) {
-            cmd << "--sync"
+        if (params.SIGN_DIGEST) {
+            cmd << "--sign-digest"
         }
 
         echo "Will run: ${cmd.join(' ')}"
 
         buildlib.withAppCiAsArtPublish() {
             withCredentials([
-                file(credentialsId: 'konflux-bot-0-ocp-art-tenant-sa', variable: 'KONFLUX_SA_KUBECONFIG'),
-                string(credentialsId: 'openshift-art-build-bot-app-id', variable: 'GITHUB_APP_ID'),
-                file(credentialsId: 'openshift-art-build-bot-private-key.pem', variable: 'GITHUB_APP_PRIVATE_KEY_PATH'),
-                usernamePassword(
-                    credentialsId: 'art-dash-db-login',
-                    passwordVariable: 'DOOZER_DB_PASSWORD',
-                    usernameVariable: 'DOOZER_DB_USER'
-                ),
+                // QUAY_AUTH_FILE grants read access to the private component repo
+                // (quay.io/openshift-release-dev/ocp-v4.0-art-dev) for discovery, and is
+                // used by cosign for registry credentials during signing.
                 file(credentialsId: 'quay-auth-file', variable: 'QUAY_AUTH_FILE'),
-                file(credentialsId: 'konflux-gcp-app-creds-prod', variable: 'GOOGLE_APPLICATION_CREDENTIALS'),
+                // KMS credentials used by cosign to sign (only needed for non-dry-run).
                 file(credentialsId: sigstore_creds_file, variable: 'KMS_CRED_FILE'),
                 string(credentialsId: sigstore_key_id, variable: 'KMS_KEY_ID'),
                 string(credentialsId: 'signing_rekor_url', variable: 'REKOR_URL'),
             ]) {
-                withEnv(['DOOZER_DB_NAME=art_dash', "BUILD_URL=${BUILD_URL}", "JOB_NAME=${JOB_NAME}"]) {
+                withEnv(["BUILD_URL=${BUILD_URL}", "JOB_NAME=${JOB_NAME}"]) {
                     try {
                         buildlib.init_artcd_working_dir()
+                        writeFile(file: "artcd_working/pullspecs.txt", text: pullspecs.join('\n') + '\n')
                         sh(script: cmd.join(' '))
                     } finally {
                         commonlib.safeArchiveArtifacts([
+                            "artcd_working/**/*.txt",
                             "artcd_working/**/*.log",
-                            "artcd_working/**/*.json",
-                            "artcd_working/**/*.yaml",
-                            "artcd_working/**/*.yml",
                         ])
                         buildlib.cleanWorkspace()
                     }

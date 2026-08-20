@@ -74,7 +74,7 @@ node() {
     commonlib.checkMock()
 
     // Parse pullspecs: drop blank lines and comments.
-    def pullspecs = params.PULLSPECS.split('\n')*.trim().findAll { it && !it.startsWith('#') }
+    def pullspecs = params.PULLSPECS.split('\n').collect { it.trim() }.findAll { it && !it.startsWith('#') }
 
     currentBuild.displayName += " ${params.SIGN_RELEASE} (${pullspecs.size()} pullspec(s))"
     if (params.DRY_RUN) {

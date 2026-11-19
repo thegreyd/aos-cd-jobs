@@ -30,7 +30,7 @@ For the default use case, this job:
  * publishes a nightly as an [officially named release image](https://amd64.ocp.releases.ci.openshift.org/#4-stable) with with a list of releases allowed to upgrade to it
  * waits up to three hours for the release to pass acceptance tests (currently, just upgrade tests)
  * opens pull requests to [cinci-graph-data](https://github.com/openshift/cincinnati-graph-data/tree/master/channels)
- * copies the clients to the [mirror](http://mirror.openshift.com/pub/openshift-v4/x86_64/clients/ocp/)
+ * copies the clients to the [mirror](https://mirror.openshift.com/pub/openshift-v4/x86_64/clients/ocp/)
  * signs the clients and release image
  * ...and handles other odds and ends for a release
 
@@ -61,6 +61,22 @@ This specifies the OCP minor version (e.g. 4.10)
 ### ASSEMBLY
 
 This specifies the name of the assembly. The assembly must be explicitly defined in releases.yml.
+
+### Private assemblies
+
+For a custom assembly with `assembly.visibility: private`, set `DOOZER_DATA_PATH` to the
+build-data repository and `DOOZER_DATA_GITREF` to the same commit SHA used by BuildSync.
+The job reads the private assembly ImageStreams, promotes payloads to
+`quay.io/openshift-release-dev/ocp-release-priv`, and tags the private release ImageStreams.
+The job needs access to those repositories and namespaces. Run BuildSync with multi-arch
+generation enabled before promoting a heterogeneous payload.
+
+Sigstore signatures stay in the private registry and bypass transparency-log upload.
+To publish legacy GPG signatures, set `PRIVATE_RELEASE_SIGNATURE_S3_URI` to an S3 bucket
+or prefix with public access blocked. The signing credentials need permission to check
+that block and upload signatures. The cluster needs access to the private signature
+and must trust the custom assembly signing key. Use `SKIP_SIGNING` to opt out of
+legacy signing when appropriate.
 
 ### ARCHES
 
@@ -141,19 +157,6 @@ this job also relies on other jobs as part of its function.
 Actually this job is _not_ invoked; but the code for syncing the oc client out
 to mirror.openshift.com is shared between the jobs, which is useful when
 something prevents completing the sync step during the promotion.
-
-### signing-jobs/sign-artifacts
-
-Once the release image is created (and if necessary has passed tests), the
-[signing job](https://saml.buildvm.hosts.prod.psi.bos.redhat.com:8888/job/signing-jobs/job/signing%252Fsign-artifacts/)
-is used to sign the release image and oc client with Red Hat's key.
-
-### cincinnati-prs
-
-After signing the release, the
-[cincinnati-prs job](https://saml.buildvm.hosts.prod.psi.bos.redhat.com:8888/job/aos-cd-builds/job/build%252Fcincinnati-prs/)
-is used to create PRs to have the release (and upgrade edges) included in OCP 4
-[release channels](https://github.com/openshift/cincinnati-graph-data/tree/master/channels).
 
 ## Permit certain validation failures
 This job runs a lot of validations against the release content, advisories, and bugs before actually promoting the release.

@@ -31,136 +31,6 @@ def destReleaseTag(String releaseName, String arch) {
     return releaseName.contains(arch) ? releaseName : "${releaseName}-${arch}"
 }
 
-/**
- * Validate that we have not released the same thing already, and that
- * we have a valid advisory if needed.
- * quay_url: quay repo location for nightly images
- * name: tag for the specific image that will be released
- * advisory: if applicable, the advisory number intended for this release
- *      if less than 0 (pre-release), an advisory is not looked for.
- *      if greater than 0, this advisory is validated.
- *      if 0, the default image advisory from group.yml is validated.
- *      Valid advisories must be in QE state and have a live ID so we can
- *      include in release metadata the URL where it will be published.
- */
-Map stageValidation(String quay_url, String dest_release_tag, int advisory = 0, boolean permitPayloadOverwrite = false, boolean permitAnyAdvisoryState = false, String nightly, String arch, boolean skipVerifyBugs = false, boolean skipPayloadCreation = false) {
-    def retval = [:]
-    version = commonlib.extractMajorMinorVersion(dest_release_tag)
-    echo "Verifying payload does not already exist"
-    res = buildlib.withAppCiAsArtPublish() {
-        return commonlib.shell(
-            returnAll: true,
-            script: "GOTRACEBACK=all oc --kubeconfig ${KUBECONFIG} adm release info ${quay_url}:${dest_release_tag}"
-        )
-    }
-
-    if(res.returnStatus == 0){
-        if (skipPayloadCreation) {
-            echo "A payload with this name already exists. Will skip payload creation."
-        } else if ( permitPayloadOverwrite ) {
-            def cd = currentBuild.description
-            currentBuild.description = "${currentBuild.description} - INPUT REQUIRED"
-            input 'A payload with this name already exists. Overwriting it is destructive if this payload has been publicly released. Proceed anyway?'
-            currentBuild.description = cd
-        } else {
-            error("Payload ${dest_release_tag} already exists! Cannot continue.")
-        }
-    } else {
-        if (skipPayloadCreation) {
-            error("Payload ${dest_release_tag} doesn't exist! Cannot continue.")
-        }
-    }
-
-    if (advisory < 0) {
-        // pre-release; do not look for any advisory to exist.
-        return retval
-    } else if (advisory) {
-        // specified advisory, go find it
-        echo "Verifying advisory ${advisory} exists"
-        res = commonlib.shell(
-                returnAll: true,
-                script: "${buildlib.ELLIOTT_BIN} --group=openshift-${version} get --json - -- ${advisory}",
-            )
-
-        if(res.returnStatus != 0){
-            error("Advisory ${advisory} does not exist! Cannot continue.")
-        }
-    } else {
-        // unspecified advisory, look for it in group.yml
-        echo "Getting current advisory for OCP $version from build data..."
-        res = commonlib.shell(
-                returnAll: true,
-                script: "${buildlib.ELLIOTT_BIN} --group=openshift-${version} --assembly ${params.ASSEMBLY ?: 'stream'} get --json - --use-default-advisory image",
-            )
-        if(res.returnStatus != 0) {
-            error("🚫 Advisory number for OCP $version couldn't be found from ocp_build_data.")
-        }
-    }
-
-    def advisoryInfo = readJSON text: res.stdout
-    retval.advisoryInfo = advisoryInfo
-    echo "Verifying advisory ${advisoryInfo.id} (https://errata.engineering.redhat.com/advisory/${advisoryInfo.id}) status"
-    if (advisoryInfo.status != 'QE' && permitAnyAdvisoryState == false) {
-        error("🚫 Advisory ${advisoryInfo.id} is not in QE state.")
-    }
-    echo "✅ Advisory ${advisoryInfo.id} is in ${advisoryInfo.status} state."
-
-    // Extract live ID from advisory info
-    // Examples:
-    // - advisory with live ID:
-    //     "errata_id": 2681,
-    //     "fulladvisory": "RHBA-2019:2681-02",
-    //     "id": 46049,
-    //     "old_advisory": "RHBA-2019:46049-02",
-    // - advisory without:
-    //     "errata_id": 46143,
-    //     "fulladvisory": "RHBA-2019:46143-01",
-    //     "id": 46143,
-    //     "old_advisory": null,
-    if (advisoryInfo.errata_id != advisoryInfo.id && advisoryInfo.fulladvisory && advisoryInfo.old_advisory) {
-        retval.liveID = (advisoryInfo.fulladvisory =~ /^(RH[EBS]A-\d+:\d+)-\d+$/)[0][1] // remove "-XX" suffix
-        retval.errataUrl ="https://access.redhat.com/errata/${retval.liveID}"
-        echo "ℹ️ Got Errata URL from advisory ${advisoryInfo.id}: ${retval.errataUrl}"
-    } else {
-        // Fail if live ID hasn't been assigned
-        error("🚫 Advisory ${advisoryInfo.id} doesn't seem to be associated with a live ID.")
-    }
-
-    slackChannel = slacklib.to(version)
-    if (nightly && (arch == 'amd64' || arch == 'x86_64')) {
-        echo "Verifying payload"
-        res = commonlib.shell(
-                returnAll: true,
-                script: "elliott --group=openshift-${version} verify-payload registry.ci.openshift.org/ocp/release:${nightly} ${advisoryInfo.id}"
-                )
-        if (res.returnStatus != 0) {
-            slackChannel.failure("elliott verify-payload failed. Advisory content does not match payload.")
-            commonlib.inputRequired(slackChannel) {
-                input 'Advisory content does not match payload. Proceed anyway?'
-            }
-        }
-    }
-
-    if (!skipVerifyBugs) {
-        echo "Verify advisory bugs..."
-        // NOTE: this only verifies bugs on the image advisory specified.  once
-        // promotion transitions to be based on releases.yml, allow
-        // verify-attached-bugs to look up all advisories there
-        res = commonlib.shell(
-            returnAll: true,
-            script: "${buildlib.ELLIOTT_BIN} --group=openshift-${version} verify-attached-bugs ${advisoryInfo.id}",
-        )
-        if(res.returnStatus != 0) {
-            slackChannel.failure("elliott verify-attached-bugs failed.")
-            commonlib.inputRequired(slackChannel) {
-                input "Bug verification failed with the following output; proceed anyway?\n${res.stdout}"
-            }
-        }
-    }
-
-    return retval
-}
-
 def getArchPrivSuffix(arch, priv) {
     def suffix = commonlib.goSuffixForArch(arch)  // expect golang in release-controller land
     if (priv)
@@ -358,7 +228,7 @@ def Map stageWaitForStable(String releaseStream, String releaseName) {
 def stageCheckBlockerBug(group){
     blocker_bugs = commonlib.shell(
         returnStdout: true,
-        script: "${buildlib.ELLIOTT_BIN} -g ${group} find-bugs:blocker"
+        script: "elliott -g ${group} find-bugs:blocker"
     ).trim()
 
     echo blocker_bugs
@@ -475,8 +345,11 @@ def stagePublishMultiClient(quay_url, from_release_tag, release_name, client_typ
     if ( ! params.DRY_RUN ) {
         // Publish the clients to our S3 bucket.
         try {
-            withCredentials([aws(credentialsId: 's3-art-srv-enterprise', accessKeyVariable: 'AWS_ACCESS_KEY_ID', secretKeyVariable: 'AWS_SECRET_ACCESS_KEY')]) {
+            withCredentials([
+            file(credentialsId: 'aws-credentials-file', variable: 'AWS_SHARED_CREDENTIALS_FILE'),
+            string(credentialsId: 's3-art-srv-enterprise-cloudflare-endpoint', variable: 'CLOUDFLARE_ENDPOINT')]) {
                 commonlib.shell(script: mirror_cmd)
+                commonlib.shell(script: "${mirror_cmd} --profile cloudflare --endpoint-url ${env.CLOUDFLARE_ENDPOINT}")
             }
         } catch (ex) {
             slacklib.to("#art-release").say("Failed syncing OCP clients to S3 in ${currentBuild.displayName} (${env.JOB_URL})")
@@ -698,8 +571,11 @@ extract_opm "$OUTDIR"
     if ( ! params.DRY_RUN ) {
         // Publish the clients to our S3 bucket.
         try {
-            withCredentials([aws(credentialsId: 's3-art-srv-enterprise', accessKeyVariable: 'AWS_ACCESS_KEY_ID', secretKeyVariable: 'AWS_SECRET_ACCESS_KEY')]) {
+            withCredentials([
+            file(credentialsId: 'aws-credentials-file', variable: 'AWS_SHARED_CREDENTIALS_FILE'),
+            string(credentialsId: 's3-art-srv-enterprise-cloudflare-endpoint', variable: 'CLOUDFLARE_ENDPOINT')]) {
                 commonlib.shell(script: mirror_cmd)
+                commonlib.shell(script: "${mirror_cmd} --profile cloudflare --endpoint-url ${env.CLOUDFLARE_ENDPOINT}")
             }
         } catch (ex) {
             slacklib.to("#art-release").say("Failed syncing OCP clients to S3 in ${currentBuild.displayName} (${env.JOB_URL})")
@@ -743,82 +619,6 @@ def getReleaseTagArchPriv(from_release_tag) {
     return [arch, priv]
 }
 
-def void sendReleaseCompleteMessage(Map release, int advisoryNumber, String advisoryLiveUrl, String arch = 'x86_64', String releaseStreamName='4-stable', String providerName = 'Red Hat UMB') {
-
-    if (params.DRY_RUN) {
-        echo "Would have sent release complete message"
-        return
-    }
-
-    def releaseName = release.name
-    def message = [
-        "contact": [
-            "url": "https://mojo.redhat.com/docs/DOC-1178565",
-            "team": "OpenShift Automatic Release Team (ART)",
-            "email": "aos-team-art@redhat.com",
-            "name": "ART Jobs",
-            "slack": "#forum-ocp-art",
-        ],
-        "run": [
-            "url": env.BUILD_URL,
-            "log": "${env.BUILD_URL}console",
-        ],
-        "artifact": [
-            "type": "ocp-release",
-            "name": "ocp-release",
-            "version": releaseName,
-            "nvr": "ocp-release-${releaseName}",
-            "architecture": arch,
-            "release_stream": releaseStreamName,
-            "release": release,
-            "advisory": [
-                "number": advisoryNumber,
-                "live_url": advisoryLiveUrl,
-            ],
-        ],
-        "generated_at": new Date().format("yyyy-MM-dd'T'HH:mm:ss'Z'", TimeZone.getTimeZone('UTC')),
-        "version": "0.2.3",
-    ]
-
-    timeout(3) {
-        def sendResult = sendCIMessage(
-            messageProperties:
-                """release=${releaseName}
-                release_stream: ${releaseStreamName}
-                product=OpenShift Container Platform
-                """,
-            messageType: 'Custom',
-            failOnError: true,
-            overrides: [topic: "VirtualTopic.eng.ci.art.ocp-release.complete"],
-            providerName: providerName,
-            messageContent: JsonOutput.toJson(message),
-        )
-        echo 'Message sent.'
-        echo "Message ID: ${sendResult.getMessageId()}"
-        echo "Message content: ${sendResult.getMessageContent()}"
-    }
-}
-
-def sendPreReleaseMessage(Map release, String releaseStreamName, String providerName = 'Red Hat UMB') {
-    timeout(3) {
-        def sendResult = sendCIMessage(
-            messageProperties:
-                """release=${release.name}
-                release_stream: ${releaseStreamName}
-                product=OpenShift Container Platform
-                """,
-            messageContent: JsonOutput.toJson(release),
-            messageType: 'Custom',
-            failOnError: true,
-            overrides: [topic: 'VirtualTopic.qe.ci.jenkins'],
-            providerName: providerName,
-        )
-        echo 'Message sent.'
-        echo "Message ID: ${sendResult.getMessageId()}"
-        echo "Message content: ${sendResult.getMessageContent()}"
-    }
-}
-
 def createAdvisoriesFor(ocpVersion, dry_run=false) {
     build(
         job: "build%2Fadvisories",
@@ -852,189 +652,6 @@ def determineNextReleaseDate(ocpVersion) {
         .with(TemporalAdjusters.next(dayOfWeek))            // 2 weeks from now
         .format(DateTimeFormatter.ofPattern("yyyy-MMM-dd")) // format required by elliott
     )
-}
-
-def signArtifacts(Map signingParams) {
-    build(
-        job: "/signing-jobs/signing%2Fsign-artifacts",
-        propagate: true,
-        parameters: [
-            string(name: "NAME", value: signingParams.name),
-            string(name: "SIGNATURE_NAME", value: signingParams.signature_name),
-            string(name: "CLIENT_TYPE", value: signingParams.client_type),
-            booleanParam(name: "DRY_RUN", value: signingParams.dry_run),
-            string(name: "ENV", value: signingParams.env),
-            string(name: "KEY_NAME", value: signingParams.key_name),
-            string(name: "ARCH", value: signingParams.arch),
-            string(name: "DIGEST", value: signingParams.digest),
-            string(name: "PRODUCT", value: signingParams.product),
-        ]
-    )
-}
-
-/**
- * Opens a series of PRs against the cincinnati-graph-data GitHub repository.
- *    Specifically, a PR for the version-agnostic candidate channel.
- * @param releaseName The name of the release (e.g. "4.3.6")
- * @param advisory The internal advisory number in errata tool. Specify -1 if there is no advisory (e.g. hotfix or rc).
- * @param ghorg For testing purposes, you can call this method specifying a personal github org/account. The
- *        openshift-bot must be a contributor in your fork of cincinnati-graph-data.
- * @param candidate_pr_note additional Cincinnati candidate PR text
- */
-def openCincinnatiPRs(releaseName, advisory, ghorg='openshift', candidate_pr_note='') {
-    def (major, minor) = commonlib.extractMajorMinorVersionNumbers(releaseName)
-    if ( major != 4 ) {
-        error("Unable to open PRs for unknown major minor: ${major}.${minor}")
-    }
-    def internal_errata_url = "https://errata.devel.redhat.com/advisory/${advisory}"
-    boolean isReleaseCandidate = commonlib.isPreRelease(releaseName)
-
-    if ( isReleaseCandidate || advisory.toInteger() <= 0 ) {
-        // There is not advisory for this release
-        internal_errata_url = ''
-    }
-    if ( !isReleaseCandidate && internal_errata_url == '' ) {
-       error("Only pre-releases are allowed to skip errata, and ${releaseName} is not a pre-release")
-    }
-
-    sshagent(["openshift-bot"]) {
-
-        // PRs that we open will be tracked in this file.
-        prs_file = "prs.txt"
-        sh "rm -f ${prs_file} && touch ${prs_file}"  // make sure we start with a clean slate
-
-        sh "git clone git@github.com:${ghorg}/cincinnati-graph-data.git"
-        dir('cincinnati-graph-data/internal-channels') {
-            def channels = [ "candidate" ]  // we used to manage more...
-            prURLs = [:]  // Will map channel to opened PR
-            for ( String channel : channels ) {
-                channelFile = "${channel}.yaml"
-                channelYaml = [ name: channel, versions: [] ]
-                if (fileExists(channelFile)) {
-                    channelYaml = readYaml(file: channelFile)
-                } else {
-                    // create the channel if it does not already exist
-                    writeFile(file: channelFile, text: "name: ${channel}\nversions:\n" )
-                }
-
-                /**
-                 * @param name - The release name
-                 * @param version - a list of versions in a channel
-                 * @return Returns true if name or name+<arch> exists in list
-                 */
-                isInChannel = { name, versions  ->
-                    for ( String version : versions ) {
-                        if ( version.startsWith( name + "+") || version.equals(name) ) {
-                            return true
-                        }
-                    }
-                    return false
-                }
-
-                addToChannel = !isInChannel(releaseName, channelYaml.get('versions', []))
-
-                echo "Creating PR for ${channel} channel"
-                branchName = "pr-${channel}-${releaseName}"
-                pr_title = "Enable ${releaseName} in ${channel} channel"
-
-                labelArgs = "-l 'lgtm,approved'"
-                extraSlackComment = ''
-
-                pr_messages = [ pr_title ]
-
-                if ( internal_errata_url ) {
-                    switch(channel) {
-                        case 'candidate':
-                            if (candidate_pr_note) {
-                                pr_messages << candidate_pr_note
-                            }
-                            pr_messages << "Please merge immediately. This PR does not need to wait for an advisory to ship, but the associated advisory is ${internal_errata_url} ."
-                            extraSlackComment = "automatically approved"
-                            break
-                        default:
-                            error("Unknown channel: ${channel}")
-                    }
-                } else {  // merge non-GA release PRs immediately
-                    if ( isReleaseCandidate ) {
-                        // Errata is irrelevant for release candidate.
-                        pr_messages << "This is a release candidate. There is no advisory associated."
-                        if (candidate_pr_note) {
-                            pr_messages << candidate_pr_note
-                        }
-                        pr_messages << 'Please merge immediately.'
-                    } else {
-                        pr_messages << "Promoting a hotfix release (e.g. for a single customer). There is no advisory associated."
-                        pr_messages << 'Please merge immediately.'
-                    }
-                }
-
-                if ( !addToChannel ) {
-                    def pr_info = "No Cincinnati PRs opened for ${channel}. Might have been done by previous architecture's release build.\n"
-                    echo pr_info
-                    currentBuild.description += pr_info
-                    continue
-                }
-
-                withCredentials([string(credentialsId: 'openshift-bot-token', variable: 'access_token')]) {
-                    def messageArgs = ''
-                    for ( String msg : pr_messages ) {
-                        messageArgs += "--message '${msg}' "
-                    }
-
-                    sh """
-                        set -euo pipefail
-                        set -o xtrace
-                        if git checkout origin/${branchName} ; then
-                            echo "The branch ${branchName} already exists in cincinnati-graph-data. No additional PRs will be created."
-                            exit 0
-                        fi
-                        git branch -f ${branchName} origin/master
-                        git checkout ${branchName}
-                        if [[ "${addToChannel}" == "true" ]]; then
-                            echo >> ${channelFile}    # add newline to avoid if human has added something without newline
-                            echo '- ${releaseName}' >> ${channelFile}   # add the entry
-                            git add ${channelFile}
-                        fi
-                        git commit -m "${pr_title}"
-                        git push -u origin ${branchName}
-                        export GITHUB_TOKEN=${access_token}
-                        hub pull-request -b ${ghorg}:master ${labelArgs} -h ${ghorg}:${branchName} ${messageArgs} > ${channel}.pr
-                        cat ${channel}.pr >> ${prs_file}    # Aggregate all PRs
-                        if test -n "${extraSlackComment}"; then
-                            echo "${extraSlackComment}" >> "${prs_file}"
-                        fi
-                        """
-
-                    prURLs[channel] = readFile("${channel}.pr").trim()
-                }
-            }
-
-            return readFile(prs_file).trim()
-        }
-    }
-}
-
-def sendCincinnatiPRsSlackNotification(releaseName, fromReleaseTag, prs, ghorg='openshift', noSlackOutput=false, additional_text='') {
-    def (major, minor) = commonlib.extractMajorMinorVersionNumbers(releaseName)
-
-    def slack_msg = "ART has opened Cincinnati PRs for ${releaseName}:\n\n"
-    if (fromReleaseTag) {
-        slack_msg += "This release was promoted using nightly"
-        for (nightly in commonlib.parseList(fromReleaseTag)) {
-            slack_msg += " registry.ci.openshift.org/ocp/release:${nightly}\n"
-        }
-    }
-    slack_msg += "\n${prs}\n"
-    if (additional_text) {
-        slack_msg += "${additional_text}\n"
-    }
-
-    if ( ghorg == 'openshift' && !noSlackOutput) {
-        slacklib.to('#forum-ocp-release').say(slack_msg)
-    } else {
-        echo "Would have sent the following slack notification to #forum-ocp-release"
-        echo slack_msg
-    }
 }
 
 return this

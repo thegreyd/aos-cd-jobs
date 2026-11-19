@@ -27,19 +27,22 @@ def runFor(version) {
 }
 
 @NonCPS
-def sortedVersions() {
-  return commonlib.ocpVersions.sort(false)
+def unsortedVersions() {
+    Collections.shuffle(commonlib.ocpVersions)
+    return commonlib.ocpVersions
 }
 
 node() {
+    timestamps {
     checkout scm
     buildlib = load("pipeline-scripts/buildlib.groovy")
     commonlib = buildlib.commonlib
 
-    for ( String version : sortedVersions() ) {
+    for ( String version : unsortedVersions() ) {
         runFor(version)
     }
     buildlib.cleanWorkspace()
+    }
 }
 
 currentBuild.description = description.trim()

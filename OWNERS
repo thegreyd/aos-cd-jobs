@@ -1,22 +1,27 @@
 reviewers:
-- sosiouxme
 - jupierce
-- thiagoalessio
 - joepvd
 - thegreyd
-- vfreex
 - locriandev
-- Ximinhan
 - ashwindasr
+- mbiarnes
+- rayfordj
+- lgarciaaco
+- adobes1
+- fgallott
+- fbladilo
 approvers:
-- sosiouxme
 - jupierce
-- thiagoalessio
 - joepvd
 - thegreyd
-- vfreex
 - locriandev
-- Ximinhan
 - ashwindasr
+- rayfordj
+- fgallott
+emeritus_approvers:
+- sosiouxme
+- thiagoalessio
+- vfreex
+- Ximinhan
 # this is to keep automation from complaining about ownership of base image builds
 component: Release

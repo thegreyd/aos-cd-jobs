@@ -9,17 +9,33 @@ GITHUB_URLS = [:]
 GITHUB_BASE_PATHS = [:]
 GITHUB_BASE = "git@github.com:openshift"
 
+// dump important tool versions to console
+def dump_versions() {
+    sh "ls -l \$(which oc)"
+    sh "oc version --client"
+    this.doozer "--version"
+    this.elliott "--version"
+}
+
 def initialize(test=false, regAws=false) {
-    this.proxy_setup()
-    this.setup_venv(true)
+    def hostname = env['HOSTNAME']
+
+    // Proxy is needed only on PSI RHV
+    if (hostname.indexOf(".hosts.prod.psi.bos.redhat.com") >= 0 || hostname.indexOf(".hosts.prod.psi.rdu2.redhat.com") >= 0) {
+        this.proxy_setup()
+    }
+
+    this.setup_venv()
     this.path_setup()
+    this.dump_versions()
 
     // don't bother logging into a registry or getting a krb5 ticket for tests
     if (!test) {
         this.kinit()
-        if (regAws) {
-            this.registry_login()
-        }
+        // Disabled because the certificate for reg-aws has expired
+        // if (regAws) {
+        //     this.registry_login()
+        // }
     }
 }
 
@@ -101,21 +117,25 @@ def registry_login() {
     }
 }
 
-def registry_quay_dev_login() {
-    // Login to the openshift-release-dev/ocp-v4.0-art-dev registry
-    // Despite the name, this is the location for both dev and production images.
-
-    withCredentials([[$class: 'UsernamePasswordMultiBinding', credentialsId: 'creds_dev_registry.quay.io',
-                      usernameVariable: 'USERNAME', passwordVariable: 'PASSWORD']]) {
-        sh 'docker login -u openshift-release-dev+art_quay_dev -p "$PASSWORD" quay.io'
-    }
-}
-
 def initialize_openshift_dir() {
     OPENSHIFT_DIR = "${GOPATH}/src/github.com/openshift"
     env.OPENSHIFT_DIR = OPENSHIFT_DIR
     sh "mkdir -p ${OPENSHIFT_DIR}"
     echo "Initialized env.OPENSHIFT_DIR: ${env.OPENSHIFT_DIR}"
+}
+
+def init_artcd_working_dir() {
+    // Removing folders that contain a lot of files can be time consuming.
+    // Using rsync is a more performant alternative: https://unix.stackexchange.com/a/79656
+
+    sh """
+    if [ -d "./artcd_working" ]; then
+        mkdir -p ./empty
+        rsync --max-alloc=8G -a --delete ./empty/ ./artcd_working/
+        rmdir ./empty ./artcd_working
+    fi
+    mkdir -p ./artcd_working
+    """
 }
 
 def cleanWhitespace(cmd) {
@@ -126,47 +146,40 @@ def cleanWhitespace(cmd) {
     )
 }
 
-def setup_venv(use_python38=false) {
-    // Preparing venv for ART tools (doozer and elliott)
+def setup_venv() {
+    // Clone art-tools
+    def owner = "openshift-eng"
+    def branch_name = "main"
+    if (params.ART_TOOLS_COMMIT) {
+        try {
+            where = ART_TOOLS_COMMIT.split('@')
+            owner = where[0]
+            branch_name = where[1]
+        } catch(err) {
+            echo "Invalid ART_TOOLS_COMMIT: ${ART_TOOLS_COMMIT}"
+            throw err
+        }
+    }
+    commonlib.shell(script: "rm -rf art-tools;  git clone -b ${branch_name} https://github.com/${owner}/art-tools.git")
+
+    // Preparing venv for ART tools
     // The following commands will run automatically every time one of our jobs
     // loads buildlib (ideally, once per pipeline)
-    VIRTUAL_ENV = "${env.WORKSPACE}/art-venv"
-    commonlib.shell(script: "rm -rf ${VIRTUAL_ENV}")
-
-    // Used by tools that don't use buildlib.doozer() / .elliott()
-    DOOZER_BIN = "${VIRTUAL_ENV}/bin/python3 art-tools/doozer/doozer"
-    ELLIOTT_BIN = "${VIRTUAL_ENV}/bin/python3 art-tools/elliott/elliott"
-
-    if (use_python38) {
+    withEnv(['UV_LINK_MODE=symlink', 'PATH+MYCARGO=~/.cargo/bin']) {
+        VIRTUAL_ENV = "${env.WORKSPACE}/art-venv"
         commonlib.shell(script: """
-        if [[ -f /bin/scl ]]; then
-            scl enable rh-python38 -- python3 -m venv --system-site-packages --symlinks ${VIRTUAL_ENV}
-        else
-            python3.8 -m venv --system-site-packages --symlinks ${VIRTUAL_ENV}
-        fi
+            rm -rf ${VIRTUAL_ENV}
+            uv venv --python 3.11 --system-site-packages ${VIRTUAL_ENV}
+            source ${VIRTUAL_ENV}/bin/activate
+            cd art-tools
+            ./install.sh
+            echo "Installed art-tools:"
+            uv pip list | grep 'art-tools'
         """)
-    } else {
-        commonlib.shell(script: "python3 -m venv --system-site-packages --symlinks ${VIRTUAL_ENV}")
     }
 
-    env.VIRTUAL_ENV = "${VIRTUAL_ENV}"
-    env.PATH = "${VIRTUAL_ENV}/bin:${env.WORKSPACE}/art-tools/elliott:${env.WORKSPACE}/art-tools/doozer:${env.PATH}"
-
-    commonlib.shell(script: "pip install --upgrade pip")
-
-    // Override art-tools submodule
-    if (params.ART_TOOLS_COMMIT) {
-        where = ART_TOOLS_COMMIT.split('@')
-        commonlib.shell(script: "rm -rf art-tools;  git clone https://github.com/${where[0]}/art-tools.git; cd art-tools; git checkout ${where[1]}")
-    }
-
-    commonlib.shell(script: "pip install -e art-tools/elliott/ -e art-tools/doozer/ -e art-tools/pyartcd/")
-    out = sh(
-        script: 'pip list | grep "doozer\\|elliott"',
-        returnStdout: true
-    )
-    echo "Installed pyartcd:"
-    echo "${out}"
+    // Update PATH to make the art-tools binaries available to jobs
+    env.PATH = "${VIRTUAL_ENV}/bin:${env.PATH}"
 }
 
 def doozer(cmd, opts=[:]){
@@ -174,12 +187,6 @@ def doozer(cmd, opts=[:]){
         usernamePassword(
             credentialsId: 'art-dash-db-login',
             passwordVariable: 'DOOZER_DB_PASSWORD', usernameVariable: 'DOOZER_DB_USER'),
-        file(
-            credentialsId: 'art-jenkins-ldap-serviceaccount-private-key',
-            variable: 'RHSM_PULP_KEY'),
-        file(
-            credentialsId: 'art-jenkins-ldap-serviceaccount-client-cert',
-            variable: 'RHSM_PULP_CERT'),
     ]) {
         withEnv(['DOOZER_DB_NAME=art_dash']) {
             return commonlib.shell(
@@ -498,21 +505,23 @@ def parse_record_log( working_dir ) {
 // @param branch <String>: The name of the branch to get configs
 //   for. For example: 'openshift-4.3'
 // @param gaOnly <boolean>: If you only want group arches and do not care about arches_override.
+// @param gitref <String>: Optional git ref (branch/tag/sha) to use instead of the default branch.
 //
 // @return arches <List>: A list of the arches built for this branch
-def branch_arches(String branch, boolean gaOnly=false) {
-    echo("Fetching group config for '${branch}'")
+def branch_arches(String branch, boolean gaOnly=false, String gitref='') {
+    def groupParam = gitref ? "${branch}@${gitref}" : branch
+    echo("Fetching group config for '${groupParam}'")
 
     // Check if arches_override has been specified. This is used in group.yaml
     // when we temporarily want to build for CPU architectures that are not yet GA.
-    def arches_override = doozer("--group=${branch} config:read-group --yaml arches_override --default '[]'",
+    def arches_override = doozer("--group=${groupParam} config:read-group --yaml arches_override --default '[]'",
             [capture: true]).trim()
     def arches_override_list = readYaml(text: arches_override)
     if ( !gaOnly && arches_override_list ) {
         return arches_override_list
     }
 
-    def arches = doozer("--group=${branch} config:read-group --yaml arches",
+    def arches = doozer("--group=${groupParam} config:read-group --yaml arches",
 		   [capture: true]).trim()
     def arches_list = readYaml(text: arches)
     return arches_list

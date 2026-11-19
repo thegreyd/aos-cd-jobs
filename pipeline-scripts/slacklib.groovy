@@ -126,7 +126,11 @@ def notifySlack(channel, as_user, text, attachments=[], thread_ts=null, replyBro
         }
 
          //print "Received slack response: ${response}\n\n"
-         return readJSON(text: response.content)
+        def responseJson = readJSON(text: response.content)
+        if (!responseJson.ok) {
+            error("slack response not ok:\n ${response.content}\n")
+        }
+        return responseJson
     }
 }
 
@@ -145,7 +149,7 @@ def to(channel_or_release, verbose=false, as_user='art-release-bot') {
         if ( channel_or_release.charAt(0).isDigit() ) { // something like 4.5?
             try {
                 def parts = channel_or_release.split('\\D')  // split on any non-digit; '4.2.5' => ['4','2','5']
-                if ( parts[0] == '3' || parts[0] == '4' ) {
+                if ( parts[0] == '3' || parts[0] == '4' || parts[0] == '5' ) {
                     // Turn into a release channel name: e.g. "4.1" -> "#art-release-4-1"
                     channel = "#art-release-${parts[0]}-${parts[1]}"
                 } else {

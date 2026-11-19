@@ -18,18 +18,44 @@ import groovy.json.JsonOutput
     "4-dev-preview-ppc64le": [this.&setDevPreviewLatest],
     "4-dev-preview-arm64": [this.&setDevPreviewLatest],
 
-    // 4.14 microshift rebase is expected to fail
-    // should be enabled when resolved
-    // see thread https://redhat-internal.slack.com/archives/CB95J6R4N/p1684351657158089
-    "4.14.0-0.nightly":  [this.&startBuildMicroshiftJob, this.&publishRPMsEl9, this.&publishRPMsEl8],
-    "4.14.0-0.nightly-arm64": [this.&publishRPMsEl9, this.&publishRPMsEl8],
+    "5.1.0-0.nightly":  [this.&startBuildMicroshiftJob, this.&publishRPMsEl9, this.&startRhcosSyncJob],
+    "5.1.0-0.nightly-arm64": [this.&publishRPMsEl9],
 
-    "4.13.0-0.nightly":  [this.&startBuildMicroshiftJob, this.&publishRPMsEl9, this.&publishRPMsEl8],
-    "4.13.0-0.nightly-arm64": [this.&publishRPMsEl9, this.&publishRPMsEl8],
+    "5.0.0-0.nightly":  [this.&startBuildMicroshiftJob, this.&publishRPMsEl9, this.&startRhcosSyncJob],
+    "5.0.0-0.nightly-arm64": [this.&publishRPMsEl9],
 
-    "4.12.0-0.nightly":  [this.&publishRPMsEl8],
-    "4.12.0-0.nightly-arm64": [this.&publishRPMsEl8],
+    "4.23.0-0.nightly":  [this.&publishRPMsEl9, this.&startRhcosSyncJob],
+    "4.23.0-0.nightly-arm64": [this.&publishRPMsEl9],
+
+    "4.22.0-0.nightly":  [this.&startBuildMicroshiftJob, this.&publishRPMsEl9, this.&publishRPMsEl8, this.&startRhcosSyncJob],
+    "4.22.0-0.nightly-arm64": [this.&publishRPMsEl9, this.&publishRPMsEl8],
+
+    "4.21.0-0.nightly":  [this.&startBuildMicroshiftJob, this.&publishRPMsEl9, this.&publishRPMsEl8, this.&startRhcosSyncJob],
+    "4.21.0-0.nightly-arm64": [this.&publishRPMsEl9, this.&publishRPMsEl8],
+
+    "4.20.0-0.nightly":  [this.&startBuildMicroshiftJob, this.&publishRPMsEl9, this.&publishRPMsEl8, this.&startRhcosSyncJob],
+    "4.20.0-0.nightly-arm64": [this.&publishRPMsEl9, this.&publishRPMsEl8],
+
+    "4.19.0-0.nightly":  [this.&startBuildMicroshiftJob, this.&publishRPMsEl9, this.&publishRPMsEl8, this.&startRhcosSyncJob],
+    "4.19.0-0.nightly-arm64": [this.&publishRPMsEl9, this.&publishRPMsEl8],
+
+    "4.18.0-0.nightly":  [this.&startBuildMicroshiftJob, this.&publishRPMsEl9, this.&publishRPMsEl8, this.&startRhcosSyncJob],
+    "4.18.0-0.nightly-arm64": [this.&publishRPMsEl9, this.&publishRPMsEl8],
+
+    "4.17.0-0.nightly":  [this.&startBuildMicroshiftJob],
+
+    "4.16.0-0.nightly":  [this.&startBuildMicroshiftJob],
 ]
+
+def startRhcosSyncJob(String releaseStream, Map latestRelease, Map previousRelease) {
+    build(
+        job: '/aos-cd-builds/build%2Frhcos_sync',
+        propagate: false,
+        parameters: [
+            string(name: 'RELEASE_TAG', value: latestRelease.name),
+        ],
+    )
+}
 
 def setDevPreviewLatest(String releaseStream, Map latestRelease, Map previousRelease) {
     def buildVersion = commonlib.extractMajorMinorVersion(latestRelease.name)
@@ -42,6 +68,7 @@ def publishRPMsEl9(String releaseStream, Map latestRelease, Map previousRelease)
     def arch = commonlib.extractArchFromReleaseName(latestRelease.name)
     build(
         job: '/aos-cd-builds/build%2Fpublish-rpms',
+        propagate: false,
         parameters: [
             string(name: 'BUILD_VERSION', value: buildVersion),
             string(name: 'ARCH', value: arch),
@@ -55,6 +82,7 @@ def publishRPMsEl8(String releaseStream, Map latestRelease, Map previousRelease)
     def arch = commonlib.extractArchFromReleaseName(latestRelease.name)
     build(
         job: '/aos-cd-builds/build%2Fpublish-rpms',
+        propagate: false,
         parameters: [
             string(name: 'BUILD_VERSION', value: buildVersion),
             string(name: 'ARCH', value: arch),
@@ -64,16 +92,31 @@ def publishRPMsEl8(String releaseStream, Map latestRelease, Map previousRelease)
 }
 
 def startBuildMicroshiftJob(String releaseStream, Map latestRelease, Map previousRelease) {
-    buildlib.withAppCiAsArtPublish() {
-        sh "oc registry login"
-    }
     // This function is invoked when a new x86_64 is created and accepted by the Release Controller
     def buildVersion = commonlib.extractMajorMinorVersion(releaseStream)
     def x86_64_nightly = latestRelease.name
     // Get all nightlies matching the x86_64 nightly
     echo "Get nightlies matching the x86_64 nightly ${x86_64_nightly}..."
-    def cmd = "doozer --assembly=stream --arches x86_64,aarch64 --group openshift-${buildVersion} --working-dir ./doozer-working get-nightlies --matching ${x86_64_nightly}"
-    def res = commonlib.shell(script: cmd, returnAll: true)
+    def res
+    // get-nightlies reads nightly release payloads from registry.ci.openshift.org (app.ci),
+    // which needs the art-publish app.ci identity, and reads Konflux payload content from
+    // quay.io, which needs the quay-auth-file. doozer's get-nightlies runs
+    // `oc adm release info` / `oc image info` with no --kubeconfig/--registry-config, so they
+    // authenticate only from REGISTRY_AUTH_FILE. Build a single auth file with BOTH quay.io
+    // creds (from quay-auth-file) and the app.ci registry.ci token: copy the read-only quay
+    // file to a writable path, then `oc registry login` (KUBECONFIG is set by
+    // withAppCiAsArtPublish) merges the registry.ci entry into it, preserving the quay entries.
+    buildlib.withAppCiAsArtPublish() {
+        withCredentials([file(credentialsId: 'quay-auth-file', variable: 'QUAY_AUTH_FILE')]) {
+            def mergedAuthFile = "${env.WORKSPACE}/.docker-merged-auth.json"
+            sh "cp \"\$QUAY_AUTH_FILE\" ${mergedAuthFile}"
+            withEnv(["REGISTRY_AUTH_FILE=${mergedAuthFile}"]) {
+                sh "oc registry login"
+                def cmd = "doozer --assembly=stream --arches x86_64,aarch64 --group openshift-${buildVersion} --registry-config \"${mergedAuthFile}\" get-nightlies --matching ${x86_64_nightly}"
+                res = commonlib.shell(script: cmd, returnAll: true)
+            }
+        }
+    }
     if (res.returnStatus != 0) {
         if (res.combined.contains("Found no nightlies") || res.combined.contains("No sets of equivalent nightlies")) {
             // Couldn't find consistent and accepted nightlies matching the x86_64 nightly
@@ -138,6 +181,7 @@ properties([
 ])
 
 node() {
+    timestamps {
     checkout scm
     buildlib = load("pipeline-scripts/buildlib.groovy")
     commonlib = buildlib.commonlib
@@ -184,4 +228,5 @@ node() {
             }
         }]
     }))
+    }
 }

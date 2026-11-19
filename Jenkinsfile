@@ -1,6 +1,7 @@
 #!/usr/bin/env groovy
 
 node {
+    timestamps {
     checkout scm
     def release = load("pipeline-scripts/release.groovy")
     def buildlib = release.buildlib
@@ -30,12 +31,24 @@ node {
             [
                 $class: 'ParametersDefinitionProperty',
                 parameterDefinitions: [
-                    commonlib.ocpVersionParam('VERSION', '4'),  // not used by "stream" assembly
+                    commonlib.ocpVersionParam('VERSION', '4plus'),  // not used by "stream" assembly
                     commonlib.artToolsParam(),
                     string(
                         name: 'ASSEMBLY',
                         description: 'The name of an assembly to promote.',
                         defaultValue: "stream",
+                        trim: true,
+                    ),
+                    string(
+                        name: 'DOOZER_DATA_PATH',
+                        description: 'Optional build-data repository for the assembly.',
+                        defaultValue: "",
+                        trim: true,
+                    ),
+                    string(
+                        name: 'DOOZER_DATA_GITREF',
+                        description: 'Optional build-data Git ref. Use the same commit as BuildSync.',
+                        defaultValue: "",
                         trim: true,
                     ),
                     booleanParam(
@@ -74,18 +87,27 @@ node {
                         defaultValue: false,
                     ),
                     booleanParam(
-                        name: 'SKIP_ATTACHED_BUG_CHECK',
-                        description: 'Skip attached bug check',
-                        defaultValue: false,
-                    ),
-                    booleanParam(
                         name: 'SKIP_SIGNING',
-                        description: 'Do not sign the release.',
+                        description: 'Do not sign the release (legacy).',
                         defaultValue: false,
                     ),
+                    string(
+                        name: 'PRIVATE_RELEASE_SIGNATURE_S3_URI',
+                        description: 'Private S3 destination for legacy signature files when signing a private assembly.',
+                        defaultValue: "",
+                        trim: true,
+                    ),
+                    choice(
+                        name: 'SIGNING_TRANSPORT',
+                        description: 'Signing transport for release artifacts',
+                        choices: [
+                            "umb",
+                            "direct",
+                        ].join("\n"),
+                    ),
                     booleanParam(
-                        name: 'FORCE_RHCOS_SYNC',
-                        description: '(Standard Release) Always sync RHCOS images to mirrors.',
+                        name: 'SKIP_SIGSTORE',
+                        description: 'Do not sign the release with the newer sigstore method.',
                         defaultValue: false,
                     ),
                     string(
@@ -106,15 +128,7 @@ node {
     )
 
     commonlib.checkMock()
-    def o = '{"group": "openshift-4.15", "assembly": "ec.0", "type": "preview", "name": "4.15.0-ec.0", "content": {"aarch64": {"pullspec": "quay.io/openshift-release-dev/ocp-release:4.15.0-ec.0-aarch64", "digest": "sha256:be92c2465aca0afb265c1b0938a78f916a71070b7cf2279f6fd27e401daffbf2", "metadata": {"version": "4.15.0-ec.0", "previous": ["4.14.0-ec.0", "4.14.0-ec.1", "4.14.0-ec.2", "4.14.0-ec.3", "4.14.0-ec.4", "4.14.0-rc.0", "4.14.0-rc.1", "4.14.0-rc.2", "4.14.0-rc.3"]}, "from_release": "registry.ci.openshift.org/ocp-arm64/release-arm64:4.15.0-0.nightly-arm64-2023-09-27-065746", "rhcos_version": "415.92.202309261919-0"}, "x86_64": {"pullspec": "quay.io/openshift-release-dev/ocp-release:4.15.0-ec.0-x86_64", "digest": "sha256:217c3265267f7695bba068d328ab513c5f6c607d936abb884e84e9b615bb8841", "metadata": {"version": "4.15.0-ec.0", "previous": ["4.14.0-ec.0", "4.14.0-ec.1", "4.14.0-ec.2", "4.14.0-ec.3", "4.14.0-ec.4", "4.14.0-rc.0", "4.14.0-rc.1", "4.14.0-rc.2", "4.14.0-rc.3"]}, "from_release": "registry.ci.openshift.org/ocp/release:4.15.0-0.nightly-2023-09-27-073353", "rhcos_version": "415.92.202309261919-0"}, "s390x": {"pullspec": "quay.io/openshift-release-dev/ocp-release:4.15.0-ec.0-s390x", "digest": "sha256:c677e24cf2ad9b23242efcb2f977706a3040dab401255a5371ff216f1d1fd6b7", "metadata": {"version": "4.15.0-ec.0", "previous": ["4.14.0-ec.0", "4.14.0-ec.1", "4.14.0-ec.2", "4.14.0-ec.3", "4.14.0-ec.4", "4.14.0-rc.0", "4.14.0-rc.1", "4.14.0-rc.2", "4.14.0-rc.3"]}, "from_release": "registry.ci.openshift.org/ocp-s390x/release-s390x:4.15.0-0.nightly-s390x-2023-09-27-065745", "rhcos_version": "415.92.202309261919-0"}, "ppc64le": {"pullspec": "quay.io/openshift-release-dev/ocp-release:4.15.0-ec.0-ppc64le", "digest": "sha256:034e911a3e80ade5d3a8584b9708771efcd48a117172f13f9818242ca3200f67", "metadata": {"version": "4.15.0-ec.0", "previous": ["4.14.0-ec.0", "4.14.0-ec.1", "4.14.0-ec.2", "4.14.0-ec.3", "4.14.0-ec.4", "4.14.0-rc.0", "4.14.0-rc.1", "4.14.0-rc.2", "4.14.0-rc.3"]}, "from_release": "registry.ci.openshift.org/ocp-ppc64le/release-ppc64le:4.15.0-0.nightly-ppc64le-2023-09-27-065746", "rhcos_version": "415.92.202309261919-0"}, "multi": {"pullspec": "quay.io/openshift-release-dev/ocp-release:4.15.0-ec.0-multi", "digest": "sha256:e019ac32e388829e716f55d776de652b46cc052e2bae3f3556a168e0e46e1758", "metadata": {"version": "4.15.0-ec.0"}, "manifests": {"aarch64": {"digest": "sha256:dc9c366572d761eea7390502e68b61e9a8392c8d1dd07d380ea716435bdae8fa"}, "x86_64": {"digest": "sha256:f427149c666143fd893b953ef4fe5f8156ebc17f9f798e6a21701790472518f3"}, "ppc64le": {"digest": "sha256:ff40ae4837c811308ce51f16629407df34135642d18912ec636b4253bd37b178"}, "s390x": {"digest": "sha256:ea407f21ef44c1c3cc73d5d72a1aa85118d229fe0ea4a0b083110007e4b36765"}}}}, "justifications": []}'
-    
-    release_info = readJSON(text: o)
-
-    // echo release_info
-    echo "release_info: ${release_info}"
-
     def (major, minor) = commonlib.extractMajorMinorVersionNumbers(params.VERSION)
-    def skipAttachedBugCheck = params.SKIP_ATTACHED_BUG_CHECK
     def next_minor = "${major}.${minor + 1}"
     if (params.DRY_RUN) {
         currentBuild.displayName += " (dry-run)"
@@ -122,247 +136,116 @@ node {
     }
     currentBuild.displayName += " ${params.VERSION} - ${params.ASSEMBLY}"
 
-    stage("Initialize") {
-        // Install pyartcd
-        commonlib.shell(script: "pip install -e ./art-tools/pyartcd")
-        // must be able to access remote registry for verification
-        buildlib.registry_quay_dev_login()
-    }
-
     // release_info is the output of `artcd promote` command.
     // It is a dict containing the information of the promoted release.
     // e.g. {"group": "openshift-4.8", "assembly": "4.8.28", "type": "standard", "name": "4.8.28", "content": {"s390x": {"pullspec": "quay.io/openshift-release-dev/ocp-release:4.8.28-s390x", "digest": "sha256:b33d11a797022f9394aca5f05f1fcba8faa3fcc607f0cdd6e75666f8f93e7141", "from_release": "registry.ci.openshift.org/ocp-s390x/release-s390x:4.8.0-0.nightly-s390x-2022-01-19-035735", "rhcos_version": "48.84.202201111102-0"}, "x86_64": {"pullspec": "quay.io/openshift-release-dev/ocp-release:4.8.28-x86_64", "digest": "sha256:ba1299680b542e46744307afc7effc15957a20592d88de4651610b52ed8be9a8", "from_release": "registry.ci.openshift.org/ocp/release:4.8.0-0.nightly-2022-01-19-035759", "rhcos_version": "48.84.202201102304-0"}, "ppc64le": {"pullspec": "quay.io/openshift-release-dev/ocp-release:4.8.28-ppc64le", "digest": "sha256:791790c88018eb9848765797f4348d4d5161dc342c61ec67d41770873e574a43", "from_release": "registry.ci.openshift.org/ocp-ppc64le/release-ppc64le:4.8.0-0.nightly-ppc64le-2022-01-19-035729", "rhcos_version": "48.84.202201102304-0"}}, "justifications": [], "advisory": 87060, "live_url": "https://access.redhat.com/errata/RHBA-2022:0172"}
     def release_info = [:]
 
-    stage("promote release") {
-        sh "rm -rf ./artcd_working && mkdir -p ./artcd_working"
-        def cmd = [
-            "artcd",
-            "-v",
-            "--working-dir=./artcd_working",
-            "--config=./config/artcd.toml",
-        ]
-        if (params.DRY_RUN) {
-            cmd << "--dry-run"
-        }
-        cmd += [
-            "promote",
-            "--group=openshift-${params.VERSION}",
-            "--assembly=${params.ASSEMBLY}",
-        ]
-        if (skipAttachedBugCheck) {
-            cmd << "--skip-attached-bug-check"
-        }
-        if (params.SKIP_IMAGE_LIST) {
-            cmd << "--skip-image-list"
-        }
-        if (params.SKIP_BUILD_MICROSHIFT) {
-            cmd << "--skip-build-microshift"
-        }
-        if (params.SKIP_MIRROR_BINARIES) {
-            cmd << "--skip-mirror-binaries"
-        }
-        if (params.SKIP_SIGNING) {
-            cmd << "--skip-signing"
-        }
-        if (params.NO_MULTI) {
-            cmd << "--no-multi"
-        }
-        if (params.MULTI_ONLY) {
-            cmd << "--multi-only"
-        }
-        if (major == 4 && minor <= 11) {
-            // Add '-multi' to heterogeneous payload name to workaround a Cincinnati issue (#incident-cincinnati-sha-mismatch-for-multi-images).
-            // This is also required for 4.11 to prevent the heterogeneous payload from getting into Cincinnati channels
-            // because 4.11 heterogeneous is tech preview.
-            cmd << "--use-multi-hack"
-        }
-        def signing_env = params.DRY_RUN? "stage": "prod"
-        cmd << "--signing-env=${signing_env}"
-        echo "Will run ${cmd}"
-        def siging_cert_id = signing_env == "prod" ? "0xffe138e-openshift-art-bot" : "0xffe138d-nonprod-openshift-art-bot"
-        buildlib.withAppCiAsArtPublish() {
-            withCredentials([[$class: 'UsernamePasswordMultiBinding', credentialsId: 'creds_dev_registry.quay.io', usernameVariable: 'QUAY_USERNAME', passwordVariable: 'QUAY_PASSWORD'],
-                             aws(credentialsId: 's3-art-srv-enterprise', accessKeyVariable: 'AWS_ACCESS_KEY_ID', secretKeyVariable: 'AWS_SECRET_ACCESS_KEY'),
-                             string(credentialsId: 'art-bot-slack-token', variable: 'SLACK_BOT_TOKEN'),
-                             string(credentialsId: 'jboss-jira-token', variable: 'JIRA_TOKEN'),
-                             string(credentialsId: 'jenkins-service-account', variable: 'JENKINS_SERVICE_ACCOUNT'),
-                             string(credentialsId: 'jenkins-service-account-token', variable: 'JENKINS_SERVICE_ACCOUNT_TOKEN'),
-                             string(credentialsId: 'openshift-bot-token', variable: 'GITHUB_TOKEN'),
-                             file(credentialsId: "${siging_cert_id}.crt", variable: 'SIGNING_CERT'),
-                             file(credentialsId: "${siging_cert_id}.key", variable: 'SIGNING_KEY'),
-                             string(credentialsId: 'redis-server-password', variable: 'REDIS_SERVER_PASSWORD'),
-                             string(credentialsId: 'redis-host', variable: 'REDIS_HOST'),
-                             string(credentialsId: 'redis-port', variable: 'REDIS_PORT'),
-                            ]) {
-                withEnv(["BUILD_URL=${BUILD_URL}"]) {
-                    def out = sh(script: cmd.join(' '), returnStdout: true).trim()
-                    echo "artcd returns:\n$out"
-                    release_info = readJSON(text: out)
+    try {
+        stage("promote release") {
+            buildlib.init_artcd_working_dir()
+            def cmd = [
+                "artcd",
+                "-v",
+                "--working-dir=./artcd_working",
+                "--config=./config/artcd.toml",
+            ]
+            if (params.DRY_RUN) {
+                cmd << "--dry-run"
+            }
+            cmd += [
+                "promote",
+                "--group=openshift-${params.VERSION}",
+                "--assembly=${params.ASSEMBLY}",
+            ]
+            if (params.SKIP_IMAGE_LIST) {
+                cmd << "--skip-image-list"
+            }
+            if (params.SKIP_BUILD_MICROSHIFT) {
+                cmd << "--skip-build-microshift"
+            }
+            if (params.SKIP_MIRROR_BINARIES) {
+                cmd << "--skip-mirror-binaries"
+            }
+            if (params.SKIP_SIGNING) {
+                cmd << "--skip-signing"
+            }
+            if (params.SKIP_SIGSTORE) {
+                cmd << "--skip-sigstore"
+            }
+            if (params.SKIP_CINCINNATI_PR_CREATION) {
+                cmd << "--skip-cincinnati-prs"
+            }
+            if (params.SKIP_OTA_SLACK_NOTIFICATION) {
+                cmd << "--skip-ota-notification"
+            }
+            if (params.NO_MULTI) {
+                cmd << "--no-multi"
+            }
+            if (params.MULTI_ONLY) {
+                cmd << "--multi-only"
+            }
+            if (major == 4 && minor <= 11) {
+                // Add '-multi' to heterogeneous payload name to workaround a Cincinnati issue (#incident-cincinnati-sha-mismatch-for-multi-images).
+                // This is also required for 4.11 to prevent the heterogeneous payload from getting into Cincinnati channels
+                // because 4.11 heterogeneous is tech preview.
+                cmd << "--use-multi-hack"
+            }
+            def signing_env = params.DRY_RUN? "stage": "prod"
+            cmd << "--signing-env=${signing_env}"
+            cmd << "--signing-transport=${params.SIGNING_TRANSPORT}"
+            echo "Will run ${cmd.join(' ')}"
+            def sigstore_creds_file = signing_env == "prod" ? "kms_prod_release_signing_creds_file" : "kms_stage_release_signing_creds_file"
+            def sigstore_key_id = signing_env == "prod" ? "kms_prod_release_signing_key_id" : "kms_stage_release_signing_key_id"
+            def build_data_credentials = params.DOOZER_DATA_PATH ? [
+                string(credentialsId: 'openshift-art-build-bot-app-id', variable: 'GITHUB_APP_ID'),
+                file(credentialsId: 'openshift-art-build-bot-private-key.pem', variable: 'GITHUB_APP_PRIVATE_KEY_PATH'),
+            ] : []
+            buildlib.withAppCiAsArtPublish() {
+                withCredentials([[$class: 'UsernamePasswordMultiBinding', credentialsId: 'creds_dev_registry.quay.io', usernameVariable: 'QUAY_USERNAME', passwordVariable: 'QUAY_PASSWORD'],
+                                 file(credentialsId: 'aws-credentials-file', variable: 'AWS_SHARED_CREDENTIALS_FILE'),
+                                 string(credentialsId: 's3-art-srv-enterprise-cloudflare-endpoint', variable: 'CLOUDFLARE_ENDPOINT'),
+                                 string(credentialsId: 'art-bot-slack-token', variable: 'SLACK_BOT_TOKEN'),
+                                 string(credentialsId: 'jira-bot-token', variable: 'JIRA_TOKEN'),
+                                 string(credentialsId: 'jenkins-service-account', variable: 'JENKINS_SERVICE_ACCOUNT'),
+                                 string(credentialsId: 'jenkins-service-account-token', variable: 'JENKINS_SERVICE_ACCOUNT_TOKEN'),
+                                 string(credentialsId: 'openshift-bot-token', variable: 'GITHUB_TOKEN'),
+                                 file(credentialsId: '0xffe138e-openshift-art-bot.crt', variable: 'SIGNING_CERT'),
+                                 file(credentialsId: '0xffe138e-openshift-art-bot.key', variable: 'SIGNING_KEY'),
+                                 file(credentialsId: 'ocp-art-signing-prod.keytab', variable: 'DIRECT_SIGNING_KEYTAB'),
+                                 string(credentialsId: 'ocp-art-signing-prod.user', variable: 'DIRECT_SIGNING_PRINCIPAL'),
+                                 file(credentialsId: sigstore_creds_file, variable: 'KMS_CRED_FILE'),
+                                 string(credentialsId: sigstore_key_id, variable: 'KMS_KEY_ID'),
+                                 string(credentialsId: 'signing_rekor_url', variable: 'REKOR_URL'),
+                                 string(credentialsId: 'redis-server-password', variable: 'REDIS_SERVER_PASSWORD'),
+                                 file(credentialsId: "art-cluster-art-cd-pipeline-kubeconfig", variable: 'ART_CLUSTER_ART_CD_PIPELINE_KUBECONFIG'),
+                                 file(credentialsId: 'quay-auth-file', variable: 'QUAY_AUTH_FILE'),
+                                 string(credentialsId: 'art-bot-jenkins-gitlab', variable: 'GITLAB_TOKEN'),
+                                ] + build_data_credentials) {
+                    withEnv([
+                        "BUILD_URL=${BUILD_URL}",
+                        "PROMOTE_DATA_PATH=${params.DOOZER_DATA_PATH ?: ''}",
+                        "PROMOTE_DATA_GITREF=${params.DOOZER_DATA_GITREF ?: ''}",
+                        "PRIVATE_RELEASE_SIGNATURE_S3_URI=${params.PRIVATE_RELEASE_SIGNATURE_S3_URI ?: ''}",
+                    ]) {
+                        try {
+                            def out = sh(script: cmd.join(' '), returnStdout: true).trim()
+                            echo "artcd returns:\n$out"
+                        } catch (err) {
+                            throw err
+                        } finally {
+                            commonlib.safeArchiveArtifacts([
+                                "artcd_working/**/*.log",
+                            ])
+                        }
+                    }
                 }
             }
         }
-    }
-
-    buildlib.registry_quay_dev_login()  // chances are, earlier auth has expired
-
-    def justifications =release_info.justifications ?: []
-
-    stage("sync RHCOS") {
-
-        /*
-         * This has inappropriate logic, disabling it for now.
-         * Current behavior is to look up rhcos version of machine-os-content
-         * under some circumstances, and to put the result on mirror.
-         * Behavior should be to look up the rhcos version in
-         * https://github.com/openshift/installer/blob/release-4.10/data/data/coreos/rhcos.json
-         * from the commit of installer, and ensure `latest-<version>` points to there.
-
-        def is_prerelease = release_info.type == "candidate"
-        if (release_info.type == "custom") {
-            echo "Skipping RHCOS sync for a custom release."
-            return
-        }
-        if (!is_prerelease && !params.FORCE_RHCOS_SYNC) {
-            echo "Skipping RHCOS sync for a ${release_info.type} release."
-            return
-        }
-        def rhcos_mirror_prefix = is_prerelease ? "pre-release" : "$major.$minor"
-        for (arch in arches) {
-            arch = commonlib.brewArchForGoArch(arch)
-            def rhcos_build = release_info.content[arch].rhcos_version
-            if (!rhcos_build) {
-                echo "Skip mirroring RHCOS for $arch"
-                continue
-            }
-            print("RHCOS build for $arch: $rhcos_build")
-            def sync_params = [
-                buildlib.param('String','OCP_VERSION', "$major.$minor"),
-                buildlib.param('String','OVERRIDE_NAME', release_info.name),
-                buildlib.param('String','ARCH', arch),
-                buildlib.param('String','MIRROR_PREFIX', rhcos_mirror_prefix),
-                buildlib.param('String','OVERRIDE_BUILD', rhcos_build),
-                booleanParam(name: 'DRY_RUN', value: params.DRY_RUN),
-                booleanParam(name: 'MOCK', value: params.MOCK)
-            ]
-            build(
-                job: '/aos-cd-builds/build%252Frhcos_sync',
-                propagate: false,
-                parameters: sync_params
-            )
-        }
-        */
-    }
-
-    stage("send release message") {
-        if (release_info.type == "custom") {
-            echo "Don't send release messages for a custom release."
-            return
-        }
-        if (params.DRY_RUN) {
-            echo "DRY_RUN: Would have sent release messages."
-            return
-        }
-
-        String[] umb_failures = []
-        release_info.content.each { arch, info ->
-            // Currently a multi/heterogeneous release payload has a modified release name to workaround a Cincinnati issue.
-            // Using the real per-arch release name in $info instead of the one defined by release artists.
-            def release_name = info.metadata.version
-            try {
-                release.sendReleaseCompleteMessage(["name": release_name], release_info.advisory ?: 0, release_info.live_url, arch)
-            } catch (exception) {
-                umb_failures.add("${release_name}-${arch}")
-            }
-        }
-        if (umb_failures) {
-            currentBuild.result = "UNSTABLE"
-            slacklib.to(params.VERSION).say("@release-artists Sending Release Complete informational message has failed for ${umb_failures}, please investigate")
+    } finally {
+        stage("clean") {
+            buildlib.cleanWorkspace()
         }
     }
-
-    stage("channel prs") {
-        if (release_info.type == "custom") {
-            echo "Skipping PR creation for custom (hotfix) release."
-            return
-        }
-        if (params.SKIP_CINCINNATI_PR_CREATION) {
-            echo "Don't create Cincinnati PRs because SKIP_CINCINNATI_PR_CREATION is set"
-            return
-        }
-        if (params.DRY_RUN) {
-            echo "[DRY RUN] Would have created Cincinnati PRs."
-            return
-        }
-        def candidate_pr_note = ""
-        if (justifications) {
-            candidate_pr_note += ""
-            for (String justification: justifications) {
-                candidate_pr_note += "${justification}\n"
-            }
-        }
-        def from_releases = release_info.content.findAll{ k, v -> v.from_release }.collect {k, v -> v.from_release.split(":")[-1] }
-        build(
-            job: '/aos-cd-builds/build%2Fcincinnati-prs',  propagate: true,
-            parameters: [
-                buildlib.param('String', 'FROM_RELEASE_TAG', from_releases.join(",")),
-                buildlib.param('String', 'RELEASE_NAME', release_info.name),
-                buildlib.param('String', 'ADVISORY_NUM', "${release_info.advisory?: 0}"),
-                buildlib.param('String', 'GITHUB_ORG', 'openshift'),
-                buildlib.param('String', 'CANDIDATE_PR_NOTE', candidate_pr_note),
-                booleanParam(name: 'SKIP_OTA_SLACK_NOTIFICATION', value: params.SKIP_OTA_SLACK_NOTIFICATION)
-            ]
-        )
     }
-
-    stage("validate RHSAs") {
-        if (release_info.type == "custom" || release_info.type == "preview") {
-            echo "Skipping RHSA check for custom (hotfix) or preview release."
-            return
-        }
-
-        if (params.DRY_RUN) {
-            return
-        }
-
-        def advisory_map = release.getAdvisories("openshift-${params.VERSION}")?: [:]
-        advisory_map.each { k, v ->
-            if (v <= 0) {
-                return
-            }
-            advisory_id = "$v"
-            res = commonlib.shell(
-                script: "${buildlib.ELLIOTT_BIN} validate-rhsa ${advisory_id}",
-                returnAll: true,
-            )
-            if (res.returnStatus != 0) {
-                msg = """
-                    Review of CVE situation required for advisory <https://errata.devel.redhat.com/advisory/${advisory_id}|${advisory_id}>.
-                    Report:
-                    ```
-                    ${res.stdout}
-                    ```
-                    Note: For GA image advisories this is expected to fail.
-                """.stripIndent()
-                slacklib.to(params.VERSION).say(msg)
-            }
-        }
-    }
-
-    stage("clean and mail") {
-        dry_subject = ""
-        if (params.DRY_RUN) { dry_subject = "[DRY RUN] "}
-        def pullspecs = release_info.content.findAll{ k, v -> v.pullspec }.collect {k, v -> v.pullspec }
-        commonlib.email(
-            to: "${params.MAIL_LIST_SUCCESS}",
-            replyTo: "aos-team-art@redhat.com",
-            from: "aos-art-automation@redhat.com",
-            subject: "${dry_subject}Success building release payload: ${release_info.name}",
-            body: """
-Jenkins Job: ${env.BUILD_URL}
-PullSpecs: ${pullspecs.join(",")}
-        """);
-        buildlib.cleanWorkspace()
-    }
-
 }

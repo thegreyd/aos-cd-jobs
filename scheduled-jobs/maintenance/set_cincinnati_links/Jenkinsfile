@@ -6,7 +6,7 @@ properties([
 
 
 description = ""
-failed = false
+unstable = false
 
 def runFor(version, channelPrefix, linkName) {
     try {
@@ -22,7 +22,7 @@ def runFor(version, channelPrefix, linkName) {
                     propagate: false,
                 )
             description += "${linkName} -> ${channelPrefix}-${version} - ${b.result}\n"
-            failed |= (b.result != "SUCCESS")
+            unstable |= (b.result != "SUCCESS")
         }
     } catch (err) {
         slacklib.to('#art-release').failure("Error running set_client_latest\n${err}")
@@ -32,7 +32,7 @@ def runFor(version, channelPrefix, linkName) {
 @NonCPS
 def sortedVersions() {
   // Return versions honoring semver
-  return commonlib.ocp4Versions.sort(false) {
+  return commonlib.ocpMajorVersions["4plus"].sort(false) {
     def major_minor = it.tokenize('.')
 
     assert major_minor.size() == 2
@@ -45,6 +45,7 @@ def sortedVersions() {
 }
 
 node() {
+    timestamps {
     checkout scm
     buildlib = load("pipeline-scripts/buildlib.groovy")
     commonlib = buildlib.commonlib
@@ -56,7 +57,8 @@ node() {
         runFor(version, 'candidate', 'candidate')
     }
     buildlib.cleanWorkspace()
+    }
 }
 
 currentBuild.description = description.trim()
-currentBuild.result = failed ? "FAILURE" : "SUCCESS"
+currentBuild.result = unstable ? "UNSTABLE" : "SUCCESS"

@@ -1,4 +1,5 @@
 node {
+    timestamps {
     checkout scm
     buildlib = load("pipeline-scripts/buildlib.groovy")
     commonlib = buildlib.commonlib
@@ -11,13 +12,13 @@ node {
     ] )
 
     def versionJobs = [:]
-    for ( version in commonlib.ocp4Versions ) {
+    for ( version in commonlib.ocpMajorVersions["4plus"] ) {
         def cv = "${version}" // make sure we use a locally scoped variable
 
         // Trigger SAST scan for ${version}
         versionJobs["scan-v${version}"] = {
             try {
-                timeout(activity: true, time: 30, unit: 'MINUTES') {
+                timeout(activity: true, time: 1, unit: 'HOURS') {
                     build job: '../aos-cd-builds/build%2Fscan-osh',
                     parameters: [
                         string(name: 'BUILD_VERSION', value: "${cv}"),
@@ -32,4 +33,5 @@ node {
     }
 
     parallel versionJobs
+    }
 }

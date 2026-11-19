@@ -1,25 +1,83 @@
 
 slacklib = load("pipeline-scripts/slacklib.groovy")
 
-ocp3Versions = [
-    "3.11",
-]
-
 // All buildable versions of ocp4
 ocp4Versions = [
+    "4.23",
+    "4.22",
+    "4.21",
+    "4.20",
+    "4.19",
+    "4.18",
+    "4.17",
+    "4.16",
     "4.15",
     "4.14",
     "4.13",
     "4.12",
-    "4.11",
-    "4.10",
-    "4.9",
-    "4.8",
-    "4.7",
-    "4.6",
 ]
 
-ocpVersions = ocp4Versions + ocp3Versions
+// All buildable versions of ocp5
+ocp5Versions = [
+    "5.2",
+    "5.1",
+    "5.0",
+]
+
+// Layered-product groups shared by scheduled jobs and manual job parameters.
+LPClusterGroups = [
+    "acm-2.11",
+    "acm-2.13",
+    "acm-2.14",
+    "acm-2.15",
+    "acm-2.16",
+    "acm-2.17",
+    "acm-5.0",
+    "cert-manager-1.19",
+    "coo-1.5",
+    "external-secrets-1.1",
+    "kueue-1.4",
+    "logging-6.0",
+    "logging-6.2",
+    "logging-6.4",
+    "logging-6.5",
+    "logging-6.6",
+    "logging-6.7",
+    "logging-6.8",
+    "mce-2.6",
+    "mce-2.8",
+    "mce-2.9",
+    "mce-2.10",
+    "mce-2.11",
+    "mce-2.17",
+    "mce-5.0",
+    "mirror-gui-1.0",
+    "mta-8.2",
+    "mta-8.3",
+    "mtc-1.8",
+    "oadp-1.3",
+    "oadp-1.4",
+    "oadp-1.5",
+    "oadp-1.6",
+    "oc-mirror-2.0",
+    "osus-5.0",
+    "quay-3.9",
+    "quay-3.10",
+    "quay-3.12",
+    "quay-3.14",
+    "quay-3.15",
+    "quay-3.16",
+    "quay-3.17",
+    "quay-3.18",
+    "quay-5.0",
+    "quay-5.1",
+    "rhosdt-0.158",
+    "rhosdt-0.163",
+    "zero-trust-1.0",
+    "zero-trust-1.1",
+]
+
+ocpVersions = ocp5Versions + ocp4Versions
 
 // some of our systems refer to golang's chosen architecture nomenclature;
 // most use brew's nomenclature or similar. translate.
@@ -52,8 +110,9 @@ def goSuffixForArch(String arch) {
 }
 
 ocpMajorVersions = [
+    "5": ocp5Versions,
     "4": ocp4Versions,
-    "3": ocp3Versions,
+    "4plus": ocp5Versions + ocp4Versions,
     "all": ocpVersions,
 ]
 
@@ -120,6 +179,32 @@ def ocpVersionParam(name='MINOR_VERSION', majorVersion='all', extraOpts=[]) {
     ]
 }
 
+def okdVersionParam(name='VERSION', extraOpts=[]) {
+    return [
+        name: name,
+        description: 'OKD Version (okd-scan skips versions without okd.enabled in build-data)',
+        $class: 'hudson.model.ChoiceParameterDefinition',
+        choices: (extraOpts + ocp5Versions + ocp4Versions).join('\n'),
+    ]
+}
+
+def enableTelemetryParam() {
+    return [
+        name: 'TELEMETRY_ENABLED',
+        description: 'Enable or disable sending traces to otel',
+        $class: 'BooleanParameterDefinition',
+        defaultValue: true
+    ]
+}
+
+def telemetryEndpointParam() {
+    return [
+        name: 'OTEL_EXPORTER_OTLP_ENDPOINT',
+        description: 'A base endpoint URL for any signal type, with an optionally-specified port number. Helpful for when you’re sending more than one signal to the same endpoint and want one environment variable to control the endpoint',
+        $class: 'hudson.model.StringParameterDefinition',
+        defaultValue: 'http://internal-a344ed20604f143d7955b3c06c517eb8-1688607883.us-east-1.elb.amazonaws.com:4317'
+    ]
+}
 
 def suppressEmailParam() {
     return [
@@ -140,12 +225,17 @@ def sanitizeInvisible(str) {
 def parseList(str) {
     // turn the string of a list separated by commas or spaces into a list
     str = (str == null) ? "" : str
-    return sanitizeInvisible(str).replaceAll(',', ' ').split()
+    return sanitizeInvisible(str).replaceAll(',', ' ').tokenize()
 }
 
 def cleanCommaList(str) {
     // turn the string list separated by commas or spaces into a comma-separated string
     return parseList(str).join(',')
+}
+
+def cleanSpaceList(str) {
+    // turn the string list separated by commas or spaces into a space-separated string
+    return parseList(str).join(' ')
 }
 
 // A reusable way to generate a working build URL. Translates it into
@@ -179,7 +269,7 @@ def cleanCommaList(str) {
 //           Jenkins Input: ${commonlib.buildURL('input')}
 //   """)
 def buildURL(String append='') {
-    env.BUILD_URL.replace('https://buildvm.openshift.eng.bos.redhat.com:8443', 'https://localhost:8888') + append
+    env.BUILD_URL.replaceFirst('https?://[^/]+', 'https://art-jenkins.apps.int.prod-stable-spoke1-dc-iad2.itup.redhat.com') + append
 }
 
 emailIndex = 0
@@ -572,10 +662,73 @@ def checkS3Path(s3_path) {
     }
 }
 
-def syncRepoToS3Mirror(local_dir, s3_path, remove_old=true, timeout_minutes=60, dry_run=false) {
+def invalidateAwsCache(s3_path, dry_run=false) {
+    // https://issues.redhat.com/browse/ART-6607 on why invalidation matters when updating existing filenames.
+
+    invalidation_path = s3_path
+    if ( !invalidation_path.endsWith('/') ) {
+      invalidation_path += '/'
+    }
+    invalidation_path += '*'
+
+    cmd = "aws cloudfront create-invalidation --distribution-id E3RAW1IMLSZJW3 --paths ${invalidation_path}"
+
+    if (dry_run) {
+        echo "Would have run: ${cmd}"
+        return
+    }
+
+    withCredentials([
+        file(credentialsId: 'aws-credentials-file', variable: 'AWS_SHARED_CREDENTIALS_FILE')
+    ]) {
+        shell(script: cmd)
+    }
+
+}
+
+def verifySyncedToMirror(local_dir, s3_path, include_only='') {
+    def filter_args = ''
+    if (include_only) {
+        filter_args = "--exclude '*' --include '${include_only}'"
+    }
+    def s3_out = sh(
+        script: "aws s3 sync --no-progress --size-only --dryrun ${filter_args} ${local_dir} s3://art-srv-enterprise${s3_path}",
+        returnStdout: true
+    ).trim()
+    if (s3_out) {
+        error("S3 post-sync verification failed -- files missing or size mismatch:\n${s3_out}")
+    }
+    sleep(15)
+    def r2_out = sh(
+        script: "aws s3 sync --no-progress --size-only --dryrun ${filter_args} ${local_dir} s3://art-srv-enterprise${s3_path} --profile cloudflare --endpoint-url ${env.CLOUDFLARE_ENDPOINT}",
+        returnStdout: true
+    ).trim()
+    if (r2_out) {
+        // aws s3 sync's dryrun check determines mismatches via ListObjectsV2, whose consistency
+        // on Cloudflare R2 can lag behind the object store itself -- HeadObject/GetObject reflect
+        // the true current state much sooner. Re-check flagged files directly via HeadObject
+        // before failing the build on what may be a stale listing.
+        echo "R2 dryrun flagged inconsistencies, double-checking with HeadObject before failing:\n${r2_out}"
+        writeFile file: '.r2_dryrun_out.txt', text: r2_out
+        def real_mismatches = sh(
+            script: 'bash pipeline-scripts/verify-r2-head-objects.sh .r2_dryrun_out.txt',
+            returnStdout: true
+        ).trim()
+        sh 'rm -f .r2_dryrun_out.txt'
+        if (real_mismatches) {
+            error("R2 post-sync verification failed -- files missing or size mismatch:\n${real_mismatches}")
+        }
+        echo "R2 dryrun mismatch was a stale ListObjectsV2 listing; HeadObject confirms objects are correct."
+    }
+    echo "Verified: all local files present in S3 and R2 for ${s3_path}"
+}
+
+def syncRepoToS3Mirror(local_dir, s3_path, remove_old=true, timeout_minutes=60, issue_cloudfront_invalidation=true, dry_run=false) {
     try {
         checkS3Path(s3_path)
-        withCredentials([aws(credentialsId: 's3-art-srv-enterprise', accessKeyVariable: 'AWS_ACCESS_KEY_ID', secretKeyVariable: 'AWS_SECRET_ACCESS_KEY')]) {
+         withCredentials([
+            file(credentialsId: 'aws-credentials-file', variable: 'AWS_SHARED_CREDENTIALS_FILE'),
+            string(credentialsId: 's3-art-srv-enterprise-cloudflare-endpoint', variable: 'CLOUDFLARE_ENDPOINT')]) {
             retry(3) {
                 timeout(time: timeout_minutes, unit: 'MINUTES') { // aws s3 sync has been observed to hang before
                     // Sync is not transactional. If we update repomd.xml before files it references are populated,
@@ -585,16 +738,25 @@ def syncRepoToS3Mirror(local_dir, s3_path, remove_old=true, timeout_minutes=60, 
                     def opts = '--no-progress --exact-timestamps'
                     if (dry_run) opts += ' --dryrun'
                     shell(script: "aws s3 sync ${opts} --exclude '*/repomd.xml' ${local_dir} s3://art-srv-enterprise${s3_path}") // Note that s3_path has / prefix.
+                    shell(script: "aws s3 sync ${opts} --exclude '*/repomd.xml' ${local_dir} s3://art-srv-enterprise${s3_path} --profile cloudflare --endpoint-url ${env.CLOUDFLARE_ENDPOINT}")
                     // 2. On the second pass, include only the repomd.xml.
                     shell(script: "aws s3 sync ${opts} --exclude '*' --include '*/repomd.xml' ${local_dir} s3://art-srv-enterprise${s3_path}")
+                    shell(script: "aws s3 sync ${opts} --exclude '*' --include '*/repomd.xml' ${local_dir} s3://art-srv-enterprise${s3_path} --profile cloudflare --endpoint-url ${env.CLOUDFLARE_ENDPOINT}")
                     if (remove_old) {
                         // For most repos, clean up the old rpms so they don't grow unbounded. Specify remove_old=false
                         // to prevent this step.
                         // Otherwise:
                         // 3. Everything should be sync'd in a consistent way -- delete anything old with --delete.
                         shell(script: "aws s3 sync ${opts} --delete ${local_dir} s3://art-srv-enterprise${s3_path}")
+                        shell(script: "aws s3 sync ${opts} --delete ${local_dir} s3://art-srv-enterprise${s3_path} --profile cloudflare --endpoint-url ${env.CLOUDFLARE_ENDPOINT}")
+                    }
+                    if (!dry_run) {
+                        verifySyncedToMirror(local_dir, s3_path)
                     }
                 }
+            }
+            if (issue_cloudfront_invalidation) {
+                invalidateAwsCache(s3_path, dry_run)
             }
         }
     } catch (e) {
@@ -603,7 +765,7 @@ def syncRepoToS3Mirror(local_dir, s3_path, remove_old=true, timeout_minutes=60, 
     }
 }
 
-def syncDirToS3Mirror(local_dir, s3_path, delete_old=true, include_only='', timeout_minutes=60) {
+def syncDirToS3Mirror(local_dir, s3_path, delete_old=true, include_only='', timeout_minutes=60, issue_cloudfront_invalidation=true) {
     try {
         checkS3Path(s3_path)
         extra_args = ""
@@ -614,11 +776,18 @@ def syncDirToS3Mirror(local_dir, s3_path, delete_old=true, include_only='', time
         if (delete_old) {
             extra_args += " --delete"
         }
-        withCredentials([aws(credentialsId: 's3-art-srv-enterprise', accessKeyVariable: 'AWS_ACCESS_KEY_ID', secretKeyVariable: 'AWS_SECRET_ACCESS_KEY')]) {
+         withCredentials([
+            file(credentialsId: 'aws-credentials-file', variable: 'AWS_SHARED_CREDENTIALS_FILE'),
+            string(credentialsId: 's3-art-srv-enterprise-cloudflare-endpoint', variable: 'CLOUDFLARE_ENDPOINT')]) {
             retry(3) {
                 timeout(time: timeout_minutes, unit: 'MINUTES') { // aws s3 sync has been observed to hang before
                     shell(script: "aws s3 sync --no-progress --exact-timestamps ${extra_args} ${local_dir} s3://art-srv-enterprise${s3_path}")
+                    shell(script: "aws s3 sync --no-progress --exact-timestamps ${extra_args} ${local_dir} s3://art-srv-enterprise${s3_path} --profile cloudflare --endpoint-url ${env.CLOUDFLARE_ENDPOINT}")
+                    verifySyncedToMirror(local_dir, s3_path, include_only)
                 }
+            }
+            if (issue_cloudfront_invalidation) {
+                 invalidateAwsCache(s3_path)
             }
         }
     } catch (e) {

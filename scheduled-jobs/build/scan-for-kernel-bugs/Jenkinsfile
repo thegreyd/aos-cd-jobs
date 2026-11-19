@@ -28,10 +28,11 @@ def runFor(version) {
 
 @NonCPS
 def sortedVersions() {
-  return commonlib.ocp4Versions.sort(false)
+  return commonlib.ocpMajorVersions["4plus"].sort(false)
 }
 
 node() {
+    timestamps {
     checkout scm
     buildlib = load("pipeline-scripts/buildlib.groovy")
     commonlib = buildlib.commonlib
@@ -40,6 +41,7 @@ node() {
         runFor(version)
     }
     buildlib.cleanWorkspace()
+    }
 }
 
 currentBuild.description = description.trim()
